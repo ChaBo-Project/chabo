@@ -1,0 +1,339 @@
+import os
+import configparser
+import logging
+import asyncio
+logger = logging.getLogger(__name__)
+
+from typing import List, Dict, Any, Union
+from pydantic import Field
+from qdrant_client import QdrantClient, AsyncQdrantClient
+from gradio_client import Client as GradioClient
+from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
+from ..utils import getconfig, get_config_value, _call_hf_endpoint, _acall_hf_endpoint
+from qdrant_client.http import models as rest
+
+
+# --- THE MAIN RETRIEVER ORCHESTRATOR CLASS  ---
+class ChaBoHFEndpointRetriever(BaseRetriever):
+    """
+    LangChain Retriever that orchestrates three decoupled microservices:
+    1. HF Endpoint for Embedding.
+    2. Dynamic Qdrant search (Native or Gradio Client).
+    3. HF Endpoint for Reranking.
+    """
+    # Configuration Fields (Used for pydantic validation and internal storage)
+    hf_token: str
+    embedding_endpoint_url: str
+    reranker_endpoint_url: str
+    
+    qdrant_mode: str
+    qdrant_url: str
+    qdrant_api_key: Union[str, None]
+    qdrant_port: int
+    qdrant_collection: str
+    
+    initial_k: int
+    final_k: int
+
+    # We use separate caches for the sync and async clients
+    sync_qdrant_client: QdrantClient = Field(default=None, exclude=True)
+    async_qdrant_client: AsyncQdrantClient = Field(default=None, exclude=True)
+    gradio_client: GradioClient = Field(default=None, exclude=True)
+
+
+    # --- Client Lazy Initialization  ---
+    @classmethod
+    def from_config(cls, **kwargs) -> 'ChaBoHFEndpointRetriever':
+        """Initializes the class and the appropriate Qdrant client based on qdrant_mode."""
+        instance = cls(**kwargs)
+        
+        mode = instance.qdrant_mode.lower()
+        if mode not in ['native', 'gradio']:
+            logger.error(f"Unsupported qdrant_mode: {mode}. Must be 'native' or 'gradio'.")
+            raise ValueError(f"Unsupported qdrant_mode: {mode}. Must be 'native' or 'gradio'.")
+        
+        # No client initialization here!
+        logger.info(f"Retriever initialized for {mode} mode (Clients will be loaded lazily).")
+        return instance
+
+    # ---  Client Init (Synchronous) ---
+    def _get_qdrant_client(self) -> Union[QdrantClient, GradioClient]:
+        """Returns the appropriate synchronous client, initializing it if necessary."""
+        if self.qdrant_mode.lower() == 'native':
+            if not self.sync_qdrant_client:
+                logger.info(f"Lazy Init: Creating Sync Native QdrantClient from  {self.qdrant_url}")
+                self.sync_qdrant_client = QdrantClient(
+                    url=self.qdrant_url,
+                    port=self.qdrant_port,
+                    https=True, 
+                    api_key=self.qdrant_api_key or self.hf_token, 
+                    timeout=60
+                )
+            return self.sync_qdrant_client
+        
+        elif self.qdrant_mode.lower() == 'gradio':
+            if not self.gradio_client:
+                logger.info(f"Lazy Init: Creating GradioClient from {self.qdrant_url}")
+                self.gradio_client = GradioClient(
+                    self.qdrant_url, 
+                    hf_token=self.qdrant_api_key # Assuming Gradio uses HF_TOKEN
+                )
+            return self.gradio_client
+        
+        raise ValueError("Invalid qdrant_mode.")
+
+    # --- Client Init (Asynchronous) ---
+    async def _aget_qdrant_client(self)->Union[AsyncQdrantClient, GradioClient]:
+        """Returns the appropriate asynchronous client, initializing it if necessary."""
+        if self.qdrant_mode.lower() == 'native':
+            if not self.async_qdrant_client:
+                logger.info(f"Lazy Init: Creating Async Native QdrantClient from {self.qdrant_url}")
+                self.async_qdrant_client = AsyncQdrantClient(
+                    url=self.qdrant_url, 
+                    port=self.qdrant_port,
+                    api_key=self.qdrant_api_key or self.hf_token, 
+                    timeout=60
+                )
+            return self.async_qdrant_client
+        
+        # Gradio client object is synchronous but its predict method is inherently async
+        return self._get_qdrant_client()
+    
+    # --- Qdrant Synchronous Search Helper (Handles Mode Switching) ---
+    def _search_qdrant(self, query_vector: List[float], filters: Dict = None) -> List[Dict[str, Any]]:
+        """Performs the synchronous Qdrant search."""
+        client = self._get_qdrant_client()
+        
+        if self.qdrant_mode.lower() == 'native':
+            logger.info(f"Performing Sync Native Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
+            search_result = client.query_points(
+                collection_name=self.qdrant_collection,
+                query=query_vector,
+                query_filter=filters,
+                limit=self.initial_k,
+                with_payload=True,
+                with_vectors=False
+            )
+            # In the native mode qdrant_client can consume the string output from and 
+            # reformualte the Scoredpoints format, but gradio cannot handle so therefore
+            # in Gradio version the wrapper reformats the outout in desired format and sits in 
+            # gradio space itself.
+            
+            results = []
+            for hit in search_result.points:
+                content = hit.payload.get("text", hit.payload.get("page_content", ""))
+                results.append({
+                    "answer": content, 
+                    "answer_metadata": hit.payload.get("metadata", {}),
+                    "score": hit.score
+                })
+            return results
+
+        elif self.qdrant_mode.lower() == 'gradio':
+            logger.info(f"Performing Sync Gradio Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
+            return client.predict(
+                query_vector_json=query_vector, 
+                collection_name=self.qdrant_collection,
+                top_k=self.initial_k,
+                #query_filter=filters,
+                api_name="/query_points" 
+            )
+        
+        return []
+    
+    # --- Qdrant Asynchronous search ---
+    async def _asearch_qdrant(self, query_vector: List[float], filters: Dict = None) -> List[Dict[str, Any]]:
+        """Performs the asynchronous Qdrant search."""
+        client = await self._aget_qdrant_client()
+
+        if self.qdrant_mode.lower() == 'native':
+            logger.info(f"Performing Async Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
+            
+            search_result = await client.query_points(
+                collection_name=self.qdrant_collection,
+                query=query_vector,
+                query_filter=filters,
+                limit=self.initial_k,
+                with_payload=True,
+                with_vectors=False
+            )
+            
+            results = []
+            for hit in search_result.points:
+                content = hit.payload.get("text", hit.payload.get("page_content", ""))
+                results.append({
+                    "answer": content, 
+                    "answer_metadata": hit.payload.get("metadata", {}),
+                    "score": hit.score
+                })
+            return results
+
+        elif self.qdrant_mode.lower() == 'gradio':
+            logger.info(f"Performing Async Gradio Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
+            loop = asyncio.get_running_loop()
+        
+            # Use run_in_executor to make the synchronous .predict() awaitable
+            return await loop.run_in_executor(
+                None, 
+                lambda: client.predict(
+                    query_vector_json=query_vector, 
+                    collection_name=self.qdrant_collection,
+                    top_k=self.initial_k,
+                    api_name="/query_points" 
+                )
+            )
+ 
+        return []
+        
+        
+    # --- Core Retrieval Orchestration (LangChain Required Method) ---
+    def _get_relevant_documents(self, query: str, **kwargs) -> List[Document]:
+        """
+        Executes the three-step pipeline: Embed -> Search -> Rerank.
+        """
+        # A. Embed Query (Call HF Endpoint 1)
+        logger.info(f"Emebedding query: {query[:50]}....")
+        embed_payload = {"inputs": query}
+        embed_response = _call_hf_endpoint(
+            self.embedding_endpoint_url, 
+            self.hf_token, 
+            embed_payload
+        )
+        query_vector = embed_response[0] 
+        
+        # B. Search Qdrant (Dynamic Call)
+        candidate_results = self._search_qdrant(query_vector, filters=kwargs.get("filters"))
+
+        logger.debug(f"Candidate Results {candidate_results}")
+        if not candidate_results:
+            logger.info(f"No candidates found for query: {query[:50]}...")
+            return []
+
+        # C. Rerank Documents (Call HF Endpoint 2)
+        reranker_payload = {
+            "query": query,
+            "texts": [candidate["answer"] for candidate in candidate_results]
+        }
+        logger.info(f"Performing Reranking for {len(candidate_results)}")
+        final_reranked_results = _call_hf_endpoint(
+            self.reranker_endpoint_url, 
+            self.hf_token, 
+            reranker_payload
+        )
+    
+        # D. Format and Return
+        documents = []
+        for doc_data in final_reranked_results[:self.final_k]: 
+            # 1. Get the original index and the new score
+            original_index = doc_data['index']
+            rerank_score = doc_data['score']
+    
+            # 2. Retrieve the original document data using the index
+            original_doc_data = candidate_results[original_index]
+
+            # 3. Extract content and metadata
+            content = original_doc_data.get("answer", original_doc_data.get("page_content", ""))
+            metadata = original_doc_data.get("answer_metadata", original_doc_data.get("metadata", {}))
+            metadata['retriever_score'] = original_doc_data.get("score")
+            metadata['rerank_score'] = doc_data.get('score')
+            
+            documents.append(
+                Document(page_content=content, metadata=metadata)
+            )
+            
+        return documents
+    
+
+    async def _aget_relevant_documents(self, query: str, **kwargs) -> List[Document]:
+        """
+        [ASYNC METHOD IMPLEMENTATION] Executes the three-step pipeline: Embed -> Search -> Rerank.
+        """
+        # A. Embed Query (Call HF Endpoint 1)
+        logger.info(f"Emebedding query: {query[:50]}....")
+        embed_payload = {"inputs": query}
+        embed_response = await _acall_hf_endpoint( # Use await and async helper
+            self.embedding_endpoint_url, 
+            self.hf_token, 
+            embed_payload
+        )
+        query_vector = embed_response[0]
+
+        # B. Search Qdrant (Dynamic Async Call)
+        candidate_results = await self._asearch_qdrant(query_vector, filters=kwargs.get("filters")) # Use await
+        logger.debug(f"Candidate Results {candidate_results}")
+
+        if not candidate_results:
+            logger.info(f"No candidates found for query: {query[:50]}...")
+            return []
+        
+        # C. Rerank Documents (Call HF Endpoint 2)
+        reranker_payload = {
+            "query": query,
+            "texts": [candidate["answer"] for candidate in candidate_results]
+        }
+        logger.info(f"Performing Reranking for {len(candidate_results)}")
+        final_reranked_results = await _acall_hf_endpoint( # Use await and async helper
+            self.reranker_endpoint_url, 
+            self.hf_token, 
+            reranker_payload
+        )
+
+
+        # D. Format and Return
+        documents = []
+        for doc_data in final_reranked_results[:self.final_k]: 
+            # 1. Get the original index and the new score
+            original_index = doc_data['index']
+            rerank_score = doc_data['score']
+    
+            # 2. Retrieve the original document data using the index
+            original_doc_data = candidate_results[original_index]
+
+            # 3. Extract content and metadata
+            content = original_doc_data.get("answer", original_doc_data.get("page_content", ""))
+            metadata = original_doc_data.get("answer_metadata", original_doc_data.get("metadata", {}))
+            metadata['retriever_score'] = original_doc_data.get("score")
+            metadata['rerank_score'] = doc_data.get('score')
+            
+            documents.append(
+                Document(page_content=content, metadata=metadata)
+            )
+            
+        return documents
+    
+
+def create_retriever_from_config(config_file: str = "params.cfg"):
+    """Loads configuration and instantiates the CustomHFRAGRetriever."""
+    config = getconfig(config_file)
+
+    config_map = {
+        "hf_token":             ("hf_endpoints", "hf_token", "HF_TOKEN"),
+        "embedding_endpoint_url": ("hf_endpoints", "embedding_endpoint_url", "EMBEDDING_ENDPOINT_URL"),
+        "reranker_endpoint_url":  ("hf_endpoints", "reranker_endpoint_url", "RERANKER_ENDPOINT_URL"),
+        
+        "qdrant_mode":          ("qdrant", "mode", "QDRANT_MODE"),
+        "qdrant_url":           ("qdrant", "url", "QDRANT_URL"),
+        "qdrant_port":          ("qdrant", "port", "QDRANT_PORT"),
+        "qdrant_api_key":       ("qdrant", "api_key", "QDRANT_API_KEY"),
+        "qdrant_collection":    ("qdrant", "collection", "QDRANT_COLLECTION"),
+        
+        "initial_k":            ("retrieval", "initial_k", "RETRIEVAL_INITIAL_K", 20),
+        "final_k":              ("retrieval", "final_k", "RETRIEVAL_FINAL_K", 5),
+    }
+
+    retriever_config_kwargs = {}
+    for key, params in config_map.items():
+
+        section, option, env_var = params[:3]
+        fallback = params[3] if len(params) > 3 else None
+        value = get_config_value(config, section, option, env_var, fallback)
+        
+        if key in ['initial_k', 'top_k', 'qdrant_port']:
+            value = int(value)
+
+            
+        retriever_config_kwargs[key] = value
+
+    logger.info(f"Configuration loaded. Qdrant Mode: {retriever_config_kwargs['qdrant_mode']}")
+    return ChaBoHFEndpointRetriever.from_config(**retriever_config_kwargs)
