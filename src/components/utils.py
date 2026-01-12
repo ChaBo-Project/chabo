@@ -77,9 +77,15 @@ def _call_hf_endpoint(url: str, token: str, payload: Dict[str, Any]) -> Dict[str
         "Content-Type": "application/json",
     }
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
-        response.raise_for_status()
         logger.info(f"Calling endpoint {url}")
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        if response.status_code == 503:
+                logger.warning(f"HF Endpoint 503: Service overloaded/starting up at {url}")
+                raise Exception("HF Service Unavailable (503)")
+        elif response.status_code == 404:
+            logger.error(f"HF Endpoint 404: Model not found at {url}")
+            raise Exception("HF Model Not Found (404)")
+        response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
         logger.error(f"Error calling HF endpoint ({url}): {e}")
@@ -94,9 +100,15 @@ async def _acall_hf_endpoint(url: str, token: str, payload: Dict[str, Any]) -> D
     # Use httpx.AsyncClient for asynchronous requests
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
             logger.info(f"Async Calling endpoint {url}")
+            response = await client.post(url, headers=headers, json=payload)
+            if response.status_code == 503:
+                logger.warning(f"HF Endpoint 503: Service overloaded/starting up at {url}")
+                raise Exception("HF Service Unavailable (503)")
+            elif response.status_code == 404:
+                logger.error(f"HF Endpoint 404: Model not found at {url}")
+                raise Exception("HF Model Not Found (404)")
+            response.raise_for_status()
             return response.json()
         except httpx.RequestError as e:
             logger.error(f"Error calling HF endpoint ({url}): {e}")

@@ -102,89 +102,90 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
     
     # --- Qdrant Synchronous Search Helper (Handles Mode Switching) ---
     def _search_qdrant(self, query_vector: List[float], filters: Dict = None) -> List[Dict[str, Any]]:
-        """Performs the synchronous Qdrant search."""
-        client = self._get_qdrant_client()
+        """Performs the synchronous Qdrant search. If mode is gradio expects
+         the api_endpoint = 'query_points' similar to native mode"""
         
-        if self.qdrant_mode.lower() == 'native':
-            logger.info(f"Performing Sync Native Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
-            search_result = client.query_points(
-                collection_name=self.qdrant_collection,
-                query=query_vector,
-                query_filter=filters,
-                limit=self.initial_k,
-                with_payload=True,
-                with_vectors=False
-            )
-            # In the native mode qdrant_client can consume the string output from and 
-            # reformualte the Scoredpoints format, but gradio cannot handle so therefore
-            # in Gradio version the wrapper reformats the outout in desired format and sits in 
-            # gradio space itself.
-            
-            results = []
-            for hit in search_result.points:
-                content = hit.payload.get("text", hit.payload.get("page_content", ""))
-                results.append({
-                    "answer": content, 
-                    "answer_metadata": hit.payload.get("metadata", {}),
-                    "score": hit.score
-                })
-            return results
+        try:
 
-        elif self.qdrant_mode.lower() == 'gradio':
-            logger.info(f"Performing Sync Gradio Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
-            return client.predict(
-                query_vector_json=query_vector, 
-                collection_name=self.qdrant_collection,
-                top_k=self.initial_k,
-                #query_filter=filters,
-                api_name="/query_points" 
-            )
-        
-        return []
-    
-    # --- Qdrant Asynchronous search ---
-    async def _asearch_qdrant(self, query_vector: List[float], filters: Dict = None) -> List[Dict[str, Any]]:
-        """Performs the asynchronous Qdrant search."""
-        client = await self._aget_qdrant_client()
-
-        if self.qdrant_mode.lower() == 'native':
-            logger.info(f"Performing Async Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
+            client = self._get_qdrant_client()
             
-            search_result = await client.query_points(
-                collection_name=self.qdrant_collection,
-                query=query_vector,
-                query_filter=filters,
-                limit=self.initial_k,
-                with_payload=True,
-                with_vectors=False
-            )
-            
-            results = []
-            for hit in search_result.points:
-                content = hit.payload.get("text", hit.payload.get("page_content", ""))
-                results.append({
-                    "answer": content, 
-                    "answer_metadata": hit.payload.get("metadata", {}),
-                    "score": hit.score
-                })
-            return results
+            if self.qdrant_mode.lower() == 'native':
+                logger.info(f"Performing Sync Native Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
+                search_result = client.query_points(
+                    collection_name=self.qdrant_collection,
+                    query=query_vector,
+                    query_filter=filters,
+                    limit=self.initial_k,
+                    with_payload=True,
+                    with_vectors=False
+                )
+                # In the native mode qdrant_client can consume the string output from and 
+                # reformualte the Scoredpoints format, but gradio cannot handle so therefore
+                # in Gradio version the wrapper reformats the outout in desired format and sits in 
+                # gradio space itself.
+                
+                return [{
+                "answer": hit.payload.get("text", hit.payload.get("page_content", "")), 
+                "answer_metadata": hit.payload.get("metadata", {}),
+                "score": hit.score
+                } for hit in search_result.points]
 
-        elif self.qdrant_mode.lower() == 'gradio':
-            logger.info(f"Performing Async Gradio Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
-            loop = asyncio.get_running_loop()
-        
-            # Use run_in_executor to make the synchronous .predict() awaitable
-            return await loop.run_in_executor(
-                None, 
-                lambda: client.predict(
+            elif self.qdrant_mode.lower() == 'gradio':
+                logger.info(f"Performing Sync Gradio Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
+                return client.predict(
                     query_vector_json=query_vector, 
                     collection_name=self.qdrant_collection,
                     top_k=self.initial_k,
+                    #query_filter=filters,
                     api_name="/query_points" 
                 )
-            )
- 
-        return []
+        
+        except Exception as e:
+            logger.error(f"Search failed at {self.qdrant_url}. Error: {e}")
+            return []
+    
+    # --- Qdrant Asynchronous search ---
+    async def _asearch_qdrant(self, query_vector: List[float], filters: Dict = None) -> List[Dict[str, Any]]:
+        """Performs the asynchronous Qdrant search. If mode is gradio expects
+         the api_endpoint = 'query_points' similar to native mode"""
+        try:
+            client = await self._aget_qdrant_client()
+
+            if self.qdrant_mode.lower() == 'native':
+                logger.info(f"Performing Async Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
+                
+                search_result = await client.query_points(
+                    collection_name=self.qdrant_collection,
+                    query=query_vector,
+                    query_filter=filters,
+                    limit=self.initial_k,
+                    with_payload=True,
+                    with_vectors=False
+                )
+                
+                return [{
+                "answer": hit.payload.get("text", hit.payload.get("page_content", "")), 
+                "answer_metadata": hit.payload.get("metadata", {}),
+                "score": hit.score
+                } for hit in search_result.points]
+
+            elif self.qdrant_mode.lower() == 'gradio':
+                logger.info(f"Performing Async Gradio Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
+                loop = asyncio.get_running_loop()
+            
+                # Use run_in_executor to make the synchronous .predict() awaitable
+                return await loop.run_in_executor(
+                    None, 
+                    lambda: client.predict(
+                        query_vector_json=query_vector, 
+                        collection_name=self.qdrant_collection,
+                        top_k=self.initial_k,
+                        api_name="/query_points" 
+                    )
+                )
+        except Exception as e:
+            logger.error(f"Search failed at {self.qdrant_url}. Error: {e}")
+            return []
         
         
     # --- Core Retrieval Orchestration (LangChain Required Method) ---
@@ -194,54 +195,69 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         """
         # A. Embed Query (Call HF Endpoint 1)
         logger.info(f"Emebedding query: {query[:50]}....")
-        embed_payload = {"inputs": query}
-        embed_response = _call_hf_endpoint(
-            self.embedding_endpoint_url, 
-            self.hf_token, 
-            embed_payload
-        )
-        query_vector = embed_response[0] 
+        try:
+
+            embed_payload = {"inputs": query}
+            embed_response = _call_hf_endpoint(
+                self.embedding_endpoint_url, 
+                self.hf_token, 
+                embed_payload
+            )
+            query_vector = embed_response[0] 
+        except Exception as e:
+            logger.error(f"CRITICAL: Embedding Failed. Details: {e}")
+            return []
         
+                
         # B. Search Qdrant (Dynamic Call)
         candidate_results = self._search_qdrant(query_vector, filters=kwargs.get("filters"))
-
         logger.debug(f"Candidate Results {candidate_results}")
         if not candidate_results:
             logger.info(f"No candidates found for query: {query[:50]}...")
             return []
 
-        # C. Rerank Documents (Call HF Endpoint 2)
-        reranker_payload = {
-            "query": query,
-            "texts": [candidate["answer"] for candidate in candidate_results]
-        }
-        logger.info(f"Performing Reranking for {len(candidate_results)}")
-        final_reranked_results = _call_hf_endpoint(
-            self.reranker_endpoint_url, 
-            self.hf_token, 
-            reranker_payload
-        )
-    
-        # D. Format and Return
+        # C. Rerank Documents (Call HF Endpoint 2), with fallback in case of error
         documents = []
-        for doc_data in final_reranked_results[:self.final_k]: 
-            # 1. Get the original index and the new score
-            original_index = doc_data['index']
-            rerank_score = doc_data['score']
-    
-            # 2. Retrieve the original document data using the index
-            original_doc_data = candidate_results[original_index]
+        try:
+            reranker_payload = {
+                "query": query,
+                "texts": [candidate["answer"] for candidate in candidate_results]
+            }
+            logger.info(f"Performing Reranking for {len(candidate_results)}")
+            final_reranked_results = _call_hf_endpoint(
+                self.reranker_endpoint_url, 
+                self.hf_token, 
+                reranker_payload)
+        
+            # D. Format and Return
+            
+            for doc_data in final_reranked_results[:self.final_k]: 
+                # 1. Get the original index and the new score
+                original_index = doc_data['index']
+                rerank_score = doc_data['score']
+        
+                # 2. Retrieve the original document data using the index
+                original_doc_data = candidate_results[original_index]
 
-            # 3. Extract content and metadata
-            content = original_doc_data.get("answer", original_doc_data.get("page_content", ""))
-            metadata = original_doc_data.get("answer_metadata", original_doc_data.get("metadata", {}))
-            metadata['retriever_score'] = original_doc_data.get("score")
-            metadata['rerank_score'] = doc_data.get('score')
-            
-            documents.append(
-                Document(page_content=content, metadata=metadata)
-            )
-            
+                # 3. Extract content and metadata
+                content = original_doc_data.get("answer", original_doc_data.get("page_content", ""))
+                metadata = original_doc_data.get("answer_metadata", original_doc_data.get("metadata", {})).copy()
+                metadata['retriever_score'] = original_doc_data.get("score")
+                metadata['rerank_score'] = doc_data.get('score')
+                
+                documents.append(
+                    Document(page_content=content, metadata=metadata)
+                )
+        except Exception as e:
+            # FALLBACK: If Reranker fails (503/Timeout), return top candidates from vector search
+            logger.warning(f"NON-CRITICAL: Reranking failed ({e}). Falling back to vector search order.")
+            for original_doc_data in candidate_results[:self.final_k]:
+                content = original_doc_data.get("answer", "")
+                metadata = original_doc_data.get("answer_metadata", original_doc_data.get("metadata", {})).copy()
+                metadata['retriever_score'] = original_doc_data.get("score")
+                metadata['rerank_score'] = "FALLBACK" # Indicate fallback in metadata
+                documents.append(Document(page_content=content, metadata=metadata))
+                  
         return documents
     
 
@@ -251,16 +267,21 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         """
         # A. Embed Query (Call HF Endpoint 1)
         logger.info(f"Emebedding query: {query[:50]}....")
-        embed_payload = {"inputs": query}
-        embed_response = await _acall_hf_endpoint( # Use await and async helper
-            self.embedding_endpoint_url, 
-            self.hf_token, 
-            embed_payload
-        )
-        query_vector = embed_response[0]
+        try:
+            embed_payload = {"inputs": query}
+            embed_response = await _acall_hf_endpoint( 
+                self.embedding_endpoint_url, 
+                self.hf_token, 
+                embed_payload
+            )
+            query_vector = embed_response[0]
+        except Exception as e:
+            logger.error(f"CRITICAL: Embedding Failed. Details: {e}")
+            return []
+
 
         # B. Search Qdrant (Dynamic Async Call)
-        candidate_results = await self._asearch_qdrant(query_vector, filters=kwargs.get("filters")) # Use await
+        candidate_results = await self._asearch_qdrant(query_vector, filters=kwargs.get("filters")) 
         logger.debug(f"Candidate Results {candidate_results}")
 
         if not candidate_results:
@@ -268,37 +289,52 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
             return []
         
         # C. Rerank Documents (Call HF Endpoint 2)
-        reranker_payload = {
-            "query": query,
-            "texts": [candidate["answer"] for candidate in candidate_results]
-        }
-        logger.info(f"Performing Reranking for {len(candidate_results)}")
-        final_reranked_results = await _acall_hf_endpoint( # Use await and async helper
-            self.reranker_endpoint_url, 
-            self.hf_token, 
-            reranker_payload
-        )
 
-
-        # D. Format and Return
         documents = []
-        for doc_data in final_reranked_results[:self.final_k]: 
-            # 1. Get the original index and the new score
-            original_index = doc_data['index']
-            rerank_score = doc_data['score']
-    
-            # 2. Retrieve the original document data using the index
-            original_doc_data = candidate_results[original_index]
-
-            # 3. Extract content and metadata
-            content = original_doc_data.get("answer", original_doc_data.get("page_content", ""))
-            metadata = original_doc_data.get("answer_metadata", original_doc_data.get("metadata", {}))
-            metadata['retriever_score'] = original_doc_data.get("score")
-            metadata['rerank_score'] = doc_data.get('score')
-            
-            documents.append(
-                Document(page_content=content, metadata=metadata)
+        try:
+            reranker_payload = {
+                "query": query,
+                "texts": [candidate["answer"] for candidate in candidate_results]
+            }
+            logger.info(f"Async Reranking for {len(candidate_results)} candidates")
+        
+            final_reranked_results = await _acall_hf_endpoint(
+                self.reranker_endpoint_url, 
+                self.hf_token, 
+                reranker_payload
             )
+
+            # D. Format and Return
+            documents = []
+            for doc_data in final_reranked_results[:self.final_k]: 
+                # 1. Get the original index and the new score
+                original_index = doc_data['index']
+                rerank_score = doc_data['score']
+        
+                # 2. Retrieve the original document data using the index
+                original_doc_data = candidate_results[original_index]
+
+                # 3. Extract content and metadata
+                content = original_doc_data.get("answer", original_doc_data.get("page_content", ""))
+                metadata = original_doc_data.get("answer_metadata", original_doc_data.get("metadata", {})).copy()
+                metadata['retriever_score'] = original_doc_data.get("score")
+                metadata['rerank_score'] = doc_data.get('score')
+                
+                documents.append(
+                    Document(page_content=content, metadata=metadata)
+                )
+        except Exception as e:
+        # FALLBACK: Return top results from initial vector search
+            logger.warning(f"NON-CRITICAL: Async Reranking failed ({e}). Returning search results.")
+            for original_doc_data in candidate_results[:self.final_k]:
+                metadata = original_doc_data.get("answer_metadata", {}).copy()
+                metadata['retriever_score'] = original_doc_data.get("score")
+                metadata['rerank_score'] = "FALLBACK"
+                
+                documents.append(Document(
+                    page_content=original_doc_data.get("answer", ""), 
+                    metadata=metadata
+                ))
             
         return documents
     
