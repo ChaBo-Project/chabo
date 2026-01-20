@@ -1,84 +1,103 @@
+"""
+ChaBo RAG Orchestrator - Production Entry Point
+"""
+import os
 import logging
-import sys
-import uvicorn
-import asyncio
 from fastapi import FastAPI
 from langserve import add_routes
 from langchain_core.runnables import RunnableLambda
-from pydantic import BaseModel, Field
-from typing import List, Optional
-from datetime import datetime
-import json
-# 1. Logging Setup
-logging.basicConfig(
-    level=logging.INFO, 
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    stream=sys.stdout
-)
-logger = logging.getLogger(__name__)
-
+import uvicorn
+from functools import partial
 
 from components.retriever.retriever_orchestrator import create_retriever_from_config
-from components.generator.generator_orchestrator  import Generator
-from components.orchestration.telemetry import extract_retriever_telemetry
-from components.orchestration.state import ChatUIInput
+from components.generator.generator_orchestrator import Generator
+from components.orchestration.workflow import build_workflow
+from components.orchestration.ui_adapters import chatui_adapter, chatui_file_adapter
+from components.orchestration.state import ChatUIInput, ChatUIFileInput
+from components.utils import getconfig
 
-try:
-    logger.info("Initializing ChaBoHFEndpointRetriever and Generator...")
-    ## NOTE: Ensure your params.cfg file exists and contains the necessary details
-    retriever_instance = create_retriever_from_config(config_file="params.cfg")
-    generator_instance = Generator()
-except Exception as e:
-    logger.error(f"Failed to initialize Service: {e}")
+config = getconfig("params.cfg")
+MAX_TURNS = config.getint("conversation_history", "MAX_TURNS", fallback=3)
+MAX_CHARS = config.getint("conversation_history", "MAX_CHARS", fallback=8000)
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Initialize services
+logger.info("Initializing ChaBoHFEndpointRetriever and Generator...")
+retriever_instance = create_retriever_from_config(config_file="params.cfg")
+generator_instance = Generator()
+
+# Build the LangGraph workflow
+compiled_graph = build_workflow(retriever_instance, generator_instance)
 
 
-# --- 2. FastAPI App Setup ---
-app = FastAPI(title="ChaBo RAG Orchestrator API")
+#----------------------------------------
+# FASTAPI SETUP
+#----------------------------------------
+
+app = FastAPI(title="ChaBo RAG Orchestrator", version="1.0.0")
 
 @app.get("/health")
 async def health_check():
-    """Verify the service is alive."""
     return {"status": "healthy"}
 
 @app.get("/")
 async def root():
     return {
-        "message": "Orchestrator is running",
-        "docs": "/docs",
-        "health": "/health",
-        "endpoint": "/chatfed-ui-stream/"
+        "message": "ChaBo RAG Orchestrator API",
+        "endpoints": {
+            "health": "/health",
+            "chatfed-ui-stream": "/chatfed-ui-stream (LangServe)",
+            "chatfed-with-file-stream": "/chatfed-with-file-stream (LangServe)",
+        }
     }
 
-@app.on_event("startup")
-async def startup_event():
-    """
-    Runs automatically when the Hugging Face Space starts.
-    """
-    logger.info("🚀 Space started....Rnnning Test.... ")
-    
-    # Run the test in the background so it doesn't block the server startup
-    asyncio.create_task(test_retriever())
 
-async def test_retriever():
-    try:
-        query = "What is EUDR and deforestation projects?"
-        logger.info(f"⏳ Calling Retirever ainvoke...{query}")
-        docs = await retriever_instance.ainvoke(query)
-    
-        if not docs:
-            # Check logs to see if it was a search fail (ERROR) or just no matches (INFO)
-            logger.warning("⚠️ No documents were returned (either service error or no semantic matches).")
-        else:
-            logger.info(f"✅ Found {len(docs)} docs.")
-        # Proceed to generation...
+#----------------------------------------
+# LANGSERVE ROUTES
+#----------------------------------------
 
-    except Exception as e:
-        # This only triggers if something completely unhandled happens (like a syntax error)
-        logger.error(f"❌ Unhandled Pipeline Crash: {str(e)}", exc_info=True)
+# Inject compiled_graph and config into adapters
+text_adapter = partial(chatui_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS)
+file_adapter = partial(chatui_file_adapter, compiled_graph=compiled_graph, max_turns=MAX_TURNS, max_chars=MAX_CHARS)
 
+# Text-only endpoint
+add_routes(
+    app,
+    RunnableLambda(text_adapter),
+    path="/chatfed-ui-stream",
+    input_type=ChatUIInput,
+    output_type=str,
+    enable_feedback_endpoint=True,
+    enable_public_trace_link_endpoint=True,
+)
 
-# --- 3. Execution ---
+# File upload endpoint
+add_routes(
+    app,
+    RunnableLambda(file_adapter),
+    path="/chatfed-with-file-stream",
+    input_type=ChatUIFileInput,
+    output_type=str,
+    enable_feedback_endpoint=True,
+    enable_public_trace_link_endpoint=True,
+)
+
+# Log schema info
+logger.info("=" * 80)
+logger.info("LangServe Routes Configured")
+logger.info(f"ChatUIInput schema: {ChatUIInput.model_json_schema()}")
+logger.info(f"ChatUIFileInput schema: {ChatUIFileInput.model_json_schema()}")
+logger.info("=" * 80)
+
+#----------------------------------------
+
 if __name__ == "__main__":
-    # Run using uvicorn
-    # In production, use: uvicorn main:app --host 0.0.0.0 --port 8000
-    uvicorn.run(app, host="0.0.0.0", port=7860, log_level="info", access_log=True)
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "7860"))
+
+    logger.info(f"Starting ChaBo RAG Orchestrator on {host}:{port}")
+    logger.info(f"API Docs: http://{host}:{port}/docs")
+
+    uvicorn.run(app, host=host, port=port, log_level="info", access_log=True)

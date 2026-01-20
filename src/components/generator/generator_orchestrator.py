@@ -199,7 +199,7 @@ class Generator:
 
     # # --- Main Generation Methods (Public Interface) ---
 
-    async def generate(self, query: str, context: Union[str, List[Dict[str, Any]], None], chatui_format: bool = False) -> Union[str, Dict[str, Any]]:
+    async def generate(self, query: str, context: Union[str, List[Dict[str, Any]], None], chatui_format: bool = False, conversation_context: str = None) -> Union[str, Dict[str, Any]]:
         """Generate an answer to a query using provided context (non-streaming)"""
         if not query.strip():
             error_msg = "Query cannot be empty"
@@ -209,14 +209,14 @@ class Generator:
 
         try:
             # 1. Process Context
-            formatted_context, processed_results = process_context(context, 
+            formatted_context, processed_results = process_context(context,
                metadata_fields_to_include=self.context_metadata_fields)
-            
-            # 2. Build Messages (with system prompt)
-            messages = build_messages(system_prompt, query, formatted_context)
-            
 
-            
+            # 2. Build Messages (with system prompt and optional conversation history)
+            messages = build_messages(system_prompt, query, formatted_context, conversation_context)
+
+
+
             # 3. Call LLM
             answer = await self._call_llm(messages)
             
@@ -237,7 +237,7 @@ class Generator:
             error_msg = str(e)
             return {"error": error_msg} if chatui_format else f"Error: {error_msg}"
 
-    async def generate_streaming(self, query: str, context: Union[str, List[Dict[str, Any]], None], chatui_format: bool = False) -> AsyncGenerator[Union[str, Dict[str, Any]], None]:
+    async def generate_streaming(self, query: str, context: Union[str, List[Dict[str, Any]], None], chatui_format: bool = False, conversation_context: str = None) -> AsyncGenerator[Union[str, Dict[str, Any]], None]:
         """Generate a streaming answer to a query using provided context through RAG"""
         if not query.strip():
             error_msg = "Query cannot be empty"
@@ -249,14 +249,16 @@ class Generator:
             return
         logger.info(f"Generating streaming answer for query: {query[:50]}")
         logger.info(f"CHATUI format is {chatui_format}")
+        if conversation_context:
+            logger.info(f"Using conversation context: {len(conversation_context)} chars")
 
         try:
             # 1. Process Context
             formatted_context, processed_results = process_context(context,
                             metadata_fields_to_include =self.context_metadata_fields)
-            
-            # 2. Build Messages (with system prompt)
-            messages = build_messages(system_prompt, query, formatted_context)
+
+            # 2. Build Messages (with system prompt and optional conversation history)
+            messages = build_messages(system_prompt, query, formatted_context, conversation_context)
 
             # 3. Stream the response and accumulate for citation parsing
             accumulated_response = ""

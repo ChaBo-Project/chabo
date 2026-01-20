@@ -214,8 +214,8 @@ def create_sources_list(
         # Create a descriptive title
         title = " - ".join(title_parts) if title_parts else f"Source {citation_num}"
         
-        # 2. Extract Link using configured field
-        link = all_meta.get(link_metadata_field, '')
+        # 2. Extract Link using configured field (use '#' as fallback for empty/missing)
+        link = all_meta.get(link_metadata_field) or '#'
 
         sources.append({
             "link": link,

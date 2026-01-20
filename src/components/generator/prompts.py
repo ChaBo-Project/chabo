@@ -48,8 +48,25 @@ FOLLOW-UP QUESTIONS (OPTIONAL):
 - Keep it concise and directly related to the available context.
 """
 
-def build_messages(system_prompt: str, question: str, context: str) -> list:
-    """Build messages for LLM call"""
+def build_messages(system_prompt: str, question: str, context: str, conversation_context: str = None) -> list:
+    """
+    Build messages for LLM call with optional conversation history.
+
+    Args:
+        system_prompt: The system prompt with instructions
+        question: The current user question
+        context: Retrieved document context
+        conversation_context: Optional conversation history (formatted as "USER: ...\nASSISTANT: ...")
+
+    Returns:
+        List of LangChain messages
+    """
     system_content = system_prompt
-    user_content = f"### CONTEXT\n{context}\n\n### USER QUESTION\n{question}"
+
+    # Build user message with optional conversation history
+    if conversation_context:
+        user_content = f"### CONVERSATION HISTORY\n{conversation_context}\n\n### CONTEXT\n{context}\n\n### USER QUESTION\n{question}"
+    else:
+        user_content = f"### CONTEXT\n{context}\n\n### USER QUESTION\n{question}"
+
     return [SystemMessage(content=system_content), HumanMessage(content=user_content)]

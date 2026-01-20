@@ -1,21 +1,36 @@
-from langgraph.graph import StateGraph, START, END
-from .nodes import retrieve_node, generate_node_streaming
+"""
+LangGraph Workflow Setup for ChaBo RAG Orchestrator
+"""
+import logging
 from functools import partial
+from langgraph.graph import StateGraph, START, END
+
 from .state import GraphState
+from .nodes import retrieve_node, generate_node_streaming
 
-def simple_graph(retriever_svc, generator_svc):
-    """Builds the compiled LangGraph."""
-    workflow = StateGraph(GraphState) # Or your GraphState class
+logger = logging.getLogger(__name__)
 
-    # Injecting services into nodes
-    r_node = partial(retrieve_node, retriever=retriever_svc)
-    g_node = partial(generate_node_streaming, generator=generator_svc)
 
+def build_workflow(retriever_instance, generator_instance):
+    """
+    Build and compile the LangGraph workflow for RAG orchestration
+    """
+    workflow = StateGraph(GraphState)
+
+    # Inject services into nodes
+    r_node = partial(retrieve_node, retriever=retriever_instance)
+    g_node = partial(generate_node_streaming, generator=generator_instance)
+
+    # Add nodes
     workflow.add_node("retrieve", r_node)
     workflow.add_node("generate", g_node)
 
+    # Define edges
     workflow.add_edge(START, "retrieve")
     workflow.add_edge("retrieve", "generate")
     workflow.add_edge("generate", END)
 
-    return workflow.compile()
+    compiled_graph = workflow.compile()
+
+    logger.info("LangGraph workflow compiled successfully")
+    return compiled_graph
