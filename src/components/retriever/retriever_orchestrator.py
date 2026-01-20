@@ -110,7 +110,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
             client = self._get_qdrant_client()
             
             if self.qdrant_mode.lower() == 'native':
-                logger.info(f"Performing Sync Native Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
+                logger.debug(f"Sync Native Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
                 search_result = client.query_points(
                     collection_name=self.qdrant_collection,
                     query=query_vector,
@@ -131,7 +131,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 } for hit in search_result.points]
 
             elif self.qdrant_mode.lower() == 'gradio':
-                logger.info(f"Performing Sync Gradio Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
+                logger.debug(f"Sync Gradio Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
                 return client.predict(
                     query_vector_json=query_vector, 
                     collection_name=self.qdrant_collection,
@@ -152,8 +152,8 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
             client = await self._aget_qdrant_client()
 
             if self.qdrant_mode.lower() == 'native':
-                logger.info(f"Performing Async Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
-                
+                logger.debug(f"Async Native Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
+
                 search_result = await client.query_points(
                     collection_name=self.qdrant_collection,
                     query=query_vector,
@@ -170,7 +170,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 } for hit in search_result.points]
 
             elif self.qdrant_mode.lower() == 'gradio':
-                logger.info(f"Performing Async Gradio Qdrant search. Collection: {self.qdrant_collection}, TOP_K:{self.initial_k}")
+                logger.debug(f"Async Gradio Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
                 loop = asyncio.get_running_loop()
             
                 # Use run_in_executor to make the synchronous .predict() awaitable

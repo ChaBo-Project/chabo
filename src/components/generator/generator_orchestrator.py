@@ -205,7 +205,6 @@ class Generator:
             error_msg = "Query cannot be empty"
             return {"error": error_msg} if chatui_format else f"Error: {error_msg}"
         logger.info(f"Generating answer for query: {query[:50]}")
-        logger.info(f"CHATUI format is {chatui_format}")
 
         try:
             # 1. Process Context
@@ -248,7 +247,6 @@ class Generator:
                 yield f"Error: {error_msg}"
             return
         logger.info(f"Generating streaming answer for query: {query[:50]}")
-        logger.info(f"CHATUI format is {chatui_format}")
         if conversation_context:
             logger.info(f"Using conversation context: {len(conversation_context)} chars")
 
@@ -278,10 +276,10 @@ class Generator:
             if chatui_format and processed_results:
                 cited_numbers = parse_citations(cleaned_response)
                 cited_sources = extract_sources(processed_results, cited_numbers)
-                sources = create_sources_list(cited_sources, 
+                sources = create_sources_list(cited_sources,
                             title_metadata_fields=self.title_metadata_fields,
                             link_metadata_field=self.link_metadata_field)
-                logging.debug(f"Sorces recieved: {sources}")
+                logger.info(f"Sources received: {sources}")
                 yield {"event": "sources", "data": {"sources": sources}}
 
             # Send END event for ChatUI format

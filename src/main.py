@@ -84,12 +84,8 @@ add_routes(
     enable_public_trace_link_endpoint=True,
 )
 
-# Log schema info
-logger.info("=" * 80)
-logger.info("LangServe Routes Configured")
-logger.info(f"ChatUIInput schema: {ChatUIInput.model_json_schema()}")
-logger.info(f"ChatUIFileInput schema: {ChatUIFileInput.model_json_schema()}")
-logger.info("=" * 80)
+logger.debug(f"ChatUIInput schema: {ChatUIInput.model_json_schema()}")
+logger.debug(f"ChatUIFileInput schema: {ChatUIFileInput.model_json_schema()}")
 
 #----------------------------------------
 

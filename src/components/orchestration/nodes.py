@@ -118,7 +118,6 @@ async def generate_node_streaming(state: "GraphState", generator: "Generator", *
         })
 
         logger.info(f"Streaming complete in {duration:.2f}s. Length: {len(accumulated_text)}")
-        logger.debug(f"Final answer: {accumulated_text}")
 
     except Exception as e:
         duration = (datetime.now() - start_time).total_seconds()

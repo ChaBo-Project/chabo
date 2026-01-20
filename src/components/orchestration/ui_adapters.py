@@ -65,12 +65,7 @@ async def process_query_streaming(
 
 async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: int = 8000):
     """Text-only adapter for ChatUI with structured message support"""
-    logger.info("=" * 80)
-    logger.info("CHATUI_ADAPTER CALLED - Request reached adapter function")
-    logger.info(f"Data type: {type(data)}")
-    logger.info(f"Data repr: {repr(data)[:500]}")
-    logger.info(f"Data dict: {data.__dict__ if hasattr(data, '__dict__') else 'N/A'}")
-    logger.info("=" * 80)
+    logger.debug(f"ChatUI adapter called with data type: {type(data)}")
 
     try:
         # Handle both dict and object access patterns
@@ -82,10 +77,6 @@ async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: in
             text_value = getattr(data, 'text', '')
             messages_value = getattr(data, 'messages', None)
             preprompt_value = getattr(data, 'preprompt', None)
-
-        logger.info(f"Extracted - text: {text_value[:100] if text_value else 'None'}")
-        logger.info(f"Extracted - messages count: {len(messages_value) if messages_value else 0}")
-        logger.info(f"Extracted - preprompt: {preprompt_value[:100] if preprompt_value else 'None'}")
 
         # Convert dict messages to objects if needed
         messages = []
@@ -99,19 +90,21 @@ async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: in
                 else:
                     messages.append(msg)
 
-        logger.info(f"Context: {messages}")
         # Extract latest user query
         user_messages = [msg for msg in messages if msg.role == 'user']
         query = user_messages[-1].content if user_messages else text_value
 
-        # Log conversation context
-        logger.info(f"Processing query: {query[:50] if query else 'empty'}...")
-        logger.info(f"Total messages in conversation: {len(messages)}")
-        logger.info(f"User messages: {len(user_messages)}, Assistant messages: {len([m for m in messages if m.role == 'assistant'])}")
+        # Conversation metadata (troubleshooting purposes)
+        msg_metadata = {
+            'total': len(messages),
+            'user': len(user_messages),
+            'assistant': len([m for m in messages if m.role == 'assistant']),
+            'msg_lengths': [len(m.content) for m in messages]
+        }
+        logger.info(f"Processing query: {query[:20]}... | Conversation: {msg_metadata}")
 
         # Build conversation context for generation (last N turns)
         conversation_context = build_conversation_context(messages, max_turns=max_turns, max_chars=max_chars)
-        logger.info(f"Context: {conversation_context}")
         full_response = ""
         sources_collected = None
 
@@ -173,8 +166,6 @@ async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_char
         # Extract query - prefer structured messages
         conversation_context = None
         if messages_value and len(messages_value) > 0:
-            logger.info("Using structured messages")
-
             # Convert dict messages to objects
             messages = []
             for msg in messages_value:
@@ -189,9 +180,14 @@ async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_char
             user_messages = [msg for msg in messages if msg.role == 'user']
             query = user_messages[-1].content if user_messages else text_value
 
-            logger.info(f"Processing query: {query[:50] if query else 'empty'}...")
-            logger.info(f"Total messages in conversation: {len(messages)}")
-            logger.info(f"User messages: {len(user_messages)}, Assistant messages: {len([m for m in messages if m.role == 'assistant'])}")
+            # Conversation metadata (troubleshooting purposes)
+            msg_metadata = {
+                'total': len(messages),
+                'user': len(user_messages),
+                'assistant': len([m for m in messages if m.role == 'assistant']),
+                'msg_lengths': [len(m.content) for m in messages]
+            }
+            logger.info(f"Processing query with file: {query[:20]}... | Conversation: {msg_metadata}")
 
             conversation_context = build_conversation_context(messages, max_turns=max_turns, max_chars=max_chars)
         else:
