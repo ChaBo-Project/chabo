@@ -18,7 +18,9 @@ async def process_query_streaming(
     sources_filter: str = "",
     subtype_filter: str = "",
     year_filter: str = "",
-    conversation_context: str = None
+    conversation_context: str = None,
+    file_content: bytes = None,
+    filename: str = None
 ):
     """
     Process a query through the LangGraph workflow with streaming.
@@ -45,6 +47,11 @@ async def process_query_streaming(
         "conversation_context": conversation_context,
         "metadata_filters": metadata_filters
     }
+
+    # Add file content if present
+    if file_content and filename:
+        initial_state["file_content"] = file_content
+        initial_state["filename"] = filename
 
     try:
         async for output in compiled_graph.astream(initial_state, stream_mode="custom"):
@@ -215,12 +222,14 @@ async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_char
         async for result in process_query_streaming(
             compiled_graph=compiled_graph,
             query=query,
-            file_upload=None,  # File handling can be extended
+            file_upload=None,
             reports_filter="",
             sources_filter="",
             subtype_filter="",
             year_filter="",
-            conversation_context=conversation_context
+            conversation_context=conversation_context,
+            file_content=file_content,
+            filename=filename
         ):
             if isinstance(result, dict):
                 result_type = result.get("type", "data")
