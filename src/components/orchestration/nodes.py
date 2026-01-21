@@ -2,14 +2,15 @@
 LangGraph orchestration nodes for retrieval and generation
 
 NEEDS TO BE UPDATED
-""" 
+"""
 import logging
 logger = logging.getLogger(__name__)
 from datetime import datetime
 import json
-from typing import TYPE_CHECKING, Dict, Any, List
+from typing import TYPE_CHECKING
 from langchain_core.documents import Document
 from .telemetry import extract_retriever_telemetry
+from components.ingestor.ingestor import process_document
 
 # Assuming these Type definitions are available from state.py and retriever_orchestrator.py
 if TYPE_CHECKING:
@@ -90,6 +91,16 @@ async def generate_node_streaming(state: "GraphState", generator: "Generator", *
     query = state.get("query")
     raw_docs = state.get("raw_documents", [])
     metadata = state.get("metadata", {})
+    ingestor_context = state.get("ingestor_context")
+
+    # If we have ingestor_context, prepend it to raw_docs as a Document
+    if ingestor_context:
+        ingestor_doc = Document(
+            page_content=ingestor_context,
+            metadata={"source": "uploaded_file", "filename": state.get("filename", "unknown")}
+        )
+        raw_docs = [ingestor_doc] + raw_docs
+        logger.info(f"Including ingestor context ({len(ingestor_context)} chars) with retrieved docs")
 
     accumulated_text = ""
     logger.info(f"Generation: {query[:50]}... ({len(raw_docs)} docs)")
@@ -128,6 +139,57 @@ async def generate_node_streaming(state: "GraphState", generator: "Generator", *
             "generation_error": str(e)
         })
         writer({"event": "error", "data": {"error": str(e)}})
+
+
+async def ingest_node(state: 'GraphState') -> 'GraphState':
+    """
+    Node to process uploaded documents (PDF, DOCX) and extract chunked context.
+    Only runs if file_content and filename are present in state.
+    """
+    start_time = datetime.now()
+
+    file_content = state.get("file_content")
+    filename = state.get("filename")
+    metadata = state.get("metadata", {})
+
+    # Skip if no file uploaded
+    if not file_content or not filename:
+        logger.info("No file to ingest, skipping ingest_node")
+        return {}
+
+    logger.info(f"Ingesting document: {filename}")
+
+    try:
+        # Process document and get chunked context
+        ingestor_context = process_document(file_content, filename)
+
+        duration = (datetime.now() - start_time).total_seconds()
+
+        metadata.update({
+            "ingest_duration": duration,
+            "ingest_success": True,
+            "ingested_filename": filename,
+            "ingestor_context_length": len(ingestor_context)
+        })
+
+        logger.info(f"Document ingested successfully in {duration:.2f}s")
+
+        return {
+            "ingestor_context": ingestor_context,
+            "metadata": metadata
+        }
+
+    except Exception as e:
+        duration = (datetime.now() - start_time).total_seconds()
+        logger.error(f"Document ingestion failed: {str(e)}", exc_info=True)
+
+        metadata.update({
+            "ingest_duration": duration,
+            "ingest_success": False,
+            "ingest_error": str(e)
+        })
+
+        return {"ingestor_context": "", "metadata": metadata}
 
 
 
