@@ -1,9 +1,7 @@
 import re
 import logging
 logger = logging.getLogger(__name__)
-from typing import List, Dict, Any, Union, Optional, Tuple
-import ast
-from langchain_core.messages import SystemMessage, HumanMessage
+from typing import List, Dict, Any, Optional, Tuple
 from langchain_core.documents import Document
 
 
@@ -11,10 +9,18 @@ from langchain_core.documents import Document
 # Core Processing Functions
 # ---------------------------------------------------------------------
 def parse_citations(response: str) -> List[int]:
-    """Parse citation numbers from response text"""
-    citation_pattern = r'\[(\d+)\]'
+    """Parse citation numbers from response text, handling both [1] and [1,2,3] formats"""
+    # Match both single citations [1] and comma-separated citations [1,2,3,4,5]
+    citation_pattern = r'\[([\d,\s]+)\]'
     matches = re.findall(citation_pattern, response)
-    citation_numbers = sorted(list(set(int(match) for match in matches)))
+
+    citation_numbers = set()
+    for match in matches:
+        # Split by comma and extract all numbers
+        numbers = re.findall(r'\d+', match)
+        citation_numbers.update(int(num) for num in numbers)
+
+    citation_numbers = sorted(list(citation_numbers))
     logger.debug(f"Probable Citations found: {citation_numbers}")
     return citation_numbers
 
@@ -213,12 +219,15 @@ def create_sources_list(
         
         # Create a descriptive title
         title = " - ".join(title_parts) if title_parts else f"Source {citation_num}"
-        
-        # 2. Extract Link using configured field (use '#' as fallback for empty/missing)
-        link = all_meta.get(link_metadata_field) or '#'
+
+        # 2. Extract Link using configured field (use 'doc://#' as fallback for empty/missing)
+        # ChatUI requires URLs to match doc://, http://, or https:// schemes
+        link = all_meta.get(link_metadata_field)
+        if not link or link == '#':
+            link = 'doc://#'  # Use doc:// scheme for placeholder links
 
         sources.append({
-            "link": link,
+            "uri": link,
             "title": title
         })
     
