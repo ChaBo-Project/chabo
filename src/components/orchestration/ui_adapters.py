@@ -3,6 +3,7 @@ ChatUI Adapters for LangGraph Workflow Streaming
 """
 import logging
 import asyncio
+import json
 from typing import AsyncGenerator, Dict, Any
 
 from components.utils import build_conversation_context
@@ -57,9 +58,11 @@ async def process_query_streaming(
         async for output in compiled_graph.astream(initial_state, stream_mode="custom"):
             if output.get("event") == "data":
                 yield {"type": "data", "content": output["data"]}
-            elif output.get("event") == "sources":
-                sources = output["data"].get("sources", [])
-                yield {"type": "sources", "content": sources}
+            elif output.get("event") == "final_answer":
+                # Handle final_answer event with webSources
+                sources = output["data"].get("webSources", [])
+                if sources:
+                    yield {"type": "sources", "content": sources}
             elif output.get("event") == "error":
                 yield {"type": "error", "content": output["data"].get("error", "Unknown error")}
 
@@ -136,11 +139,13 @@ async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: in
                     sources_collected = content
                 elif result_type == "end":
                     if sources_collected:
+                        # Send sources as markdown with doc:// URLs for ChatUI to parse
                         sources_text = "\n\n**Sources:**\n"
                         for i, source in enumerate(sources_collected, 1):
                             title = source.get('title', 'Unknown')
-                            link = source.get('link') or '#'  # Handle empty string
-                            sources_text += f"{i}. [{title}]({link})\n"
+                            uri = source.get('uri') or 'doc://#'
+                            sources_text += f"{i}. [{title}]({uri})\n"
+                        logger.info(f"Sending markdown sources with doc:// scheme")
                         yield sources_text
                 elif result_type == "error":
                     yield f"Error: {content}"
@@ -241,14 +246,16 @@ async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_char
                     sources_collected = content
                 elif result_type == "end":
                     if sources_collected:
+                        # Send sources as markdown with doc:// URLs for ChatUI to parse
                         sources_text = "\n\n**Sources:**\n"
                         for i, source in enumerate(sources_collected, 1):
                             if isinstance(source, dict):
                                 title = source.get('title', 'Unknown')
-                                link = source.get('link') or '#'  # Handle empty string
-                                sources_text += f"{i}. [{title}]({link})\n"
+                                uri = source.get('uri') or 'doc://#'
+                                sources_text += f"{i}. [{title}]({uri})\n"
                             else:
                                 sources_text += f"{i}. {str(source)}\n"
+                        logger.info(f"Sending markdown sources with doc:// scheme (file)")
                         yield sources_text
                 elif result_type == "error":
                     yield f"Error: {content}"
