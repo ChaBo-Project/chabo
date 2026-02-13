@@ -25,9 +25,10 @@ services:
       dockerfile: chatui.Dockerfile
     ports:
       - "3000:3000"
-    # environment:
-    #   # - ORIGIN=http://138.197.179.117:3000
-    #   # - ALLOW_INSECURE_COOKIES=true
+    # For testing in non-HTTPS environments, enable this:
+    environment:
+      - ORIGIN=http://138.197.179.117:3000
+
     volumes:
       - ./chatui.env.local:/app/.env.local:ro
       - chatui-db:/data/db

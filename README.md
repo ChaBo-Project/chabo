@@ -157,14 +157,19 @@ docker-compose -f docker-compose/docker-compose.yml down
 - ChatUI connects to ChaBo via the internal Docker network (`http://chabo:7860`)
 - MongoDB data and model directories are persisted via Docker volumes
 
-### Accessing ChatUI over HTTP (Non-HTTPS Deployments)
+### Testing ChatUI over HTTP (Non-HTTPS)
 
 When deploying to a server without HTTPS (e.g., a VPS accessed via IP address), ChatUI requires two additional environment variables set on the `chatui` service in `docker-compose.yml`:
 
+In `docker-compose.yml`:
 ```yaml
 environment:
   - ORIGIN=http://<your-server-ip>:3000
-  - ALLOW_INSECURE_COOKIES=true
+```
+
+In `chatui.env.local`:
+```
+ALLOW_INSECURE_COOKIES=true
 ```
 
 - **`ORIGIN`**: Tells SvelteKit the expected origin for CSRF protection. Without this, form submissions (e.g., sending a message) return a 403 error.
