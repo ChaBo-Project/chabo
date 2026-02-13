@@ -1,3 +1,5 @@
 .env
 *.DS_Store
 __pycache__/
+NOTES.md
+docker-compose/chatui.env.local

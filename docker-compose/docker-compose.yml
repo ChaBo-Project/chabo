@@ -1,0 +1,38 @@
+services:
+  chabo:
+    build:
+      context: ..
+      dockerfile: docker-compose/backend.Dockerfile
+    ports:
+      - "7860:7860"
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+      # Uncomment if using alternative LLM providers:
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # - COHERE_API_KEY=${COHERE_API_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  chatui:
+    build:
+      context: .
+      dockerfile: chatui.Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./chatui.env.local:/app/.env.local:ro
+      - chatui-db:/data/db
+      - chatui-models:/data/models
+    depends_on:
+      chabo:
+        condition: service_healthy
+
+volumes:
+  chatui-db:
+  chatui-models:
