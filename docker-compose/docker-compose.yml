@@ -26,7 +26,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - ORIGIN=http://138.197.179.117:3000
+      # - ORIGIN=http://138.197.179.117:3000
       # - ALLOW_INSECURE_COOKIES=true
     volumes:
       - ./chatui.env.local:/app/.env.local:ro
