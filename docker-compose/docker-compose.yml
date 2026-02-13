@@ -27,7 +27,7 @@ services:
       - "3000:3000"
     environment:
       - ORIGIN=http://138.197.179.117:3000
-      - COOKIE_SECURE=false
+      - ALLOW_INSECURE_COOKIES=true
     volumes:
       - ./chatui.env.local:/app/.env.local:ro
       - chatui-db:/data/db
