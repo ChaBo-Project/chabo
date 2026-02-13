@@ -34,13 +34,6 @@ fi
 # --- 6. Disable LLM-based title generation ---
 export LLM_SUMMARIZATION=false
 
-# --- 7. Load .env.local variables ---
-if test -f /app/.env.local; then
-    set -a
-    source /app/.env.local
-    set +a
-fi
-
-# --- 8. Start ChatUI Application ---
+# --- 7. Start ChatUI Application ---
 echo "Starting ChatUI application..."
 exec dotenv -e /app/.env -c -- node /app/build/index.js -- --host 0.0.0.0 --port 3000
