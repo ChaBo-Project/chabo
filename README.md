@@ -133,6 +133,10 @@ cp docker-compose/chatui.env.local.template docker-compose/chatui.env.local
 export HF_TOKEN=your_huggingface_token
 export QDRANT_API_KEY=your_qdrant_api_key
 
+
+export HF_TOKEN=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
+export QDRANT_API_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.D5dvll9j_ZE59y1aiVuRsUMcOykzCg6CiASPngn6xcg
+
 # 4. Build and start both services
 docker-compose -f docker-compose/docker-compose.yml up --build
 
