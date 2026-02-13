@@ -133,10 +133,6 @@ cp docker-compose/chatui.env.local.template docker-compose/chatui.env.local
 export HF_TOKEN=your_huggingface_token
 export QDRANT_API_KEY=your_qdrant_api_key
 
-
-export HF_TOKEN=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
-export QDRANT_API_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.D5dvll9j_ZE59y1aiVuRsUMcOykzCg6CiASPngn6xcg
-
 # 4. Build and start both services
 docker-compose -f docker-compose/docker-compose.yml up --build
 
@@ -160,6 +156,21 @@ docker-compose -f docker-compose/docker-compose.yml down
 - The `chatui` service builds from `chatui.Dockerfile`, which pulls the pre-built ChatUI image from GHCR
 - ChatUI connects to ChaBo via the internal Docker network (`http://chabo:7860`)
 - MongoDB data and model directories are persisted via Docker volumes
+
+### Accessing ChatUI over HTTP (Non-HTTPS Deployments)
+
+When deploying to a server without HTTPS (e.g., a VPS accessed via IP address), ChatUI requires two additional environment variables set on the `chatui` service in `docker-compose.yml`:
+
+```yaml
+environment:
+  - ORIGIN=http://<your-server-ip>:3000
+  - ALLOW_INSECURE_COOKIES=true
+```
+
+- **`ORIGIN`**: Tells SvelteKit the expected origin for CSRF protection. Without this, form submissions (e.g., sending a message) return a 403 error.
+- **`ALLOW_INSECURE_COOKIES`**: Allows session cookies over plain HTTP. By default, ChatUI sets cookies as `Secure` (HTTPS-only), which causes the browser to silently drop them over HTTP, resulting in 403 errors on conversation pages.
+
+These are not needed when running behind HTTPS (e.g., HuggingFace Spaces, or behind a reverse proxy like Caddy/nginx with TLS).
 
 ## Troubleshooting: ChatUI Not Starting (Docker Compose)
 
