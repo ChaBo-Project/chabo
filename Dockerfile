@@ -8,10 +8,6 @@ RUN useradd -m -u 1000 user
 
 WORKDIR /app
 
-COPY --chown=user requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-
 # install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -24,4 +20,8 @@ COPY --link --chown=1000 . .
 EXPOSE 7860 
 
 # launch with unbuffered output
-CMD ["python", "-u", "app/main.py"]
+# Use main_prod.py for production with full RAG functionality
+# Use main.py for testing mode with startup validation
+CMD ["python", "-u", "src/main.py"]
+
+

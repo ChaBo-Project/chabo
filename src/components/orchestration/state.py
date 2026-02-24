@@ -1,17 +1,22 @@
+"""
+Pydantic models for orchestration state and ChatUI input
+"""
 from typing import Optional, Dict, Any, List
 from typing_extensions import TypedDict
 from pydantic import BaseModel
 from langchain_core.documents import Document
 
-class GraphState(TypedDict):
+class GraphState(TypedDict, total=False):
     """State object passed through LangGraph workflow"""
     query: str
     context: str
-    raw_context: list[Document]
+    raw_documents: List[Document]  # Retrieved documents for generation
+    raw_context: List[Document]    # Alias for backward compatibility
     ingestor_context: str
     result: str
-    sources: List[Dict[str, str]] 
-    metadata: [Dict[str, Any]]
+    sources: List[Dict[str, str]]
+    metadata: Dict[str, Any]
+    conversation_context: Optional[str]  # Conversation history for multi-turn
     file_content: Optional[bytes]
     filename: Optional[str]
     file_type: Optional[str]
@@ -26,11 +31,11 @@ class Message(BaseModel):
 
 class ChatUIInput(BaseModel):
     """Input model for text-only ChatUI requests"""
-    messages: Optional[List[Message]] = None  # Structured conversation history
+    messages: Optional[List[Message]] = None
     preprompt: Optional[str] = None
 
 class ChatUIFileInput(BaseModel):
     """Input model for ChatUI requests with file attachments"""
     files: Optional[List[Dict[str, Any]]] = None
-    messages: Optional[List[Message]] = None  # Structured conversation history
+    messages: Optional[List[Message]] = None
     preprompt: Optional[str] = None
