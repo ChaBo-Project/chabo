@@ -271,19 +271,24 @@ class Generator:
 
             # 4. Final Post-Processing (after stream is complete)
             cleaned_response = clean_citations(accumulated_response)
-            
-            # Send sources at the end if available and in ChatUI format
-            if chatui_format and processed_results:
-                cited_numbers = parse_citations(cleaned_response)
-                cited_sources = extract_sources(processed_results, cited_numbers)
-                sources = create_sources_list(cited_sources,
-                            title_metadata_fields=self.title_metadata_fields,
-                            link_metadata_field=self.link_metadata_field)
-                logger.info(f"Sources received: {sources}")
-                yield {"event": "sources", "data": {"sources": sources}}
 
-            # Send END event for ChatUI format
+            # Send final answer with sources at the end if in ChatUI format
             if chatui_format:
+                final_answer_data = {"text": cleaned_response}
+
+                # Add sources if available
+                if processed_results:
+                    cited_numbers = parse_citations(cleaned_response)
+                    cited_sources = extract_sources(processed_results, cited_numbers)
+                    sources = create_sources_list(cited_sources,
+                                title_metadata_fields=self.title_metadata_fields,
+                                link_metadata_field=self.link_metadata_field)
+                    final_answer_data["webSources"] = sources
+                    logger.info(f"Final answer webSources: {sources}")
+
+                yield {"event": "final_answer", "data": final_answer_data}
+
+                # Send END event for ChatUI format
                 yield {"event": "end", "data": {}}
 
         except Exception as e:
