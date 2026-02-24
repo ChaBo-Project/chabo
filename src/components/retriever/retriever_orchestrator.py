@@ -343,32 +343,22 @@ def create_retriever_from_config(config_file: str = "params.cfg"):
     """Loads configuration and instantiates the CustomHFRAGRetriever."""
     config = getconfig(config_file)
 
-    hf_token = os.getenv("HF_TOKEN")
-    if not hf_token:
-        raise ValueError("HF_TOKEN environment variable is required but not set")
-
-    qdrant_api_key = os.getenv("QDRANT_API_KEY")
-    if not qdrant_api_key:
-        raise ValueError("QDRANT_API_KEY environment variable is required but not set")
-
     config_map = {
+        "hf_token":             ("hf_endpoints", "hf_token", "HF_TOKEN"),
         "embedding_endpoint_url": ("hf_endpoints", "embedding_endpoint_url", "EMBEDDING_ENDPOINT_URL"),
         "reranker_endpoint_url":  ("hf_endpoints", "reranker_endpoint_url", "RERANKER_ENDPOINT_URL"),
 
         "qdrant_mode":          ("qdrant", "mode", "QDRANT_MODE"),
         "qdrant_url":           ("qdrant", "url", "QDRANT_URL"),
         "qdrant_port":          ("qdrant", "port", "QDRANT_PORT"),
+        "qdrant_api_key":       ("qdrant", "api_key", "QDRANT_API_KEY"),
         "qdrant_collection":    ("qdrant", "collection", "QDRANT_COLLECTION"),
 
         "initial_k":            ("retrieval", "initial_k", "RETRIEVAL_INITIAL_K", 20),
         "final_k":              ("retrieval", "final_k", "RETRIEVAL_FINAL_K", 5),
     }
 
-    retriever_config_kwargs = {
-        "hf_token": hf_token,
-        "qdrant_api_key": qdrant_api_key
-    }
-
+    retriever_config_kwargs = {}
     for key, params in config_map.items():
 
         section, option, env_var = params[:3]
