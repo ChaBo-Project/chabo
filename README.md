@@ -132,9 +132,13 @@ cp docker-compose/chatui.env.local.template docker-compose/chatui.env.local
 # 3. Set your backend environment variables
 export HF_TOKEN=your_huggingface_token
 export QDRANT_API_KEY=your_qdrant_api_key
-
-# 4. Build and start both services
+#  # For testing in non-HTTPS environments, it is http://138.197.179.117:3000
+export UI_ORIGIN=your_ui_url
+# 4. Build and start only backend services
 docker-compose -f docker-compose/docker-compose.yml up --build
+
+# or build and run backend(chabo) and qdrant (infra) and ui services
+docker-compose -f docker-compose/docker-compose.yml --profile infra --profile ui up -d --build
 
 # Or run in detached mode
 docker-compose -f docker-compose/docker-compose.yml up -d --build
@@ -144,7 +148,16 @@ docker-compose -f docker-compose/docker-compose.yml logs -f
 
 # Stop services
 docker-compose -f docker-compose/docker-compose.yml down
-```
+
+# To push your embedding data into the Qdrant vector database, replace the data/data.parquet with your own data
+#  run the following command. 
+# **Note:** Ensure you use the same collection name as defined in your `params.cfg` \
+# and the correct vector dimension for your embedding model (e.g., 1024 for BGE-large).
+
+docker exec -it docker-compose_chabo_1 python src/components/ingestor/upload_parquet.py \
+    --file data/data.parquet \
+    --collection YOUR_COLLECTION_NAME \
+    --vector_size 1024
 
 **Service URLs:**
 - ChatUI Frontend: http://localhost:3000
