@@ -12,8 +12,9 @@ services:
       
   tei-embedding:
     profiles: ["local"]
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
-    # For GPU, use: ghcr.io/huggingface/text-embeddings-inference:1.5
+    platform: linux/amd64
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.2
+    # For GPU, use: ghcr.io/huggingface/text-embeddings-inference:1.9.2
     ports:
       - "8081:80"
     environment:
@@ -30,8 +31,9 @@ services:
 
   tei-reranker:
     profiles: ["local"]
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
-    # For GPU, use: ghcr.io/huggingface/text-embeddings-inference:1.5
+    platform: linux/amd64
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.2
+    # For GPU, use: ghcr.io/huggingface/text-embeddings-inference:1.9.2
     ports:
       - "8082:80"
     environment:
