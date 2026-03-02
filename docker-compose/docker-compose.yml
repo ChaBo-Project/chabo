@@ -1,4 +1,15 @@
 services:
+  qdrant:
+    profiles: ["infra"]
+    build:
+      context: ..
+      dockerfile: docker-compose/qdrant.Dockerfile
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/data
+      
   chabo:
     build:
       context: ..
@@ -12,6 +23,9 @@ services:
       # - OPENAI_API_KEY=${OPENAI_API_KEY}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       # - COHERE_API_KEY=${COHERE_API_KEY}
+    volumes:
+      - ..:/app            # Maps the root directory to /app
+      - ../data:/app/data  # Specifically ensures the data folder is mapped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7860/health"]
       interval: 15s
@@ -20,6 +34,7 @@ services:
       start_period: 10s
 
   chatui:
+    profiles: ["ui"]
     build:
       context: .
       dockerfile: chatui.Dockerfile
@@ -27,7 +42,11 @@ services:
       - "3000:3000"
     # For testing in non-HTTPS environments, enable this:
     environment:
-      - ORIGIN=http://138.197.179.117:3000
+      - ORIGIN=${UI_ORIGIN}
+      # 2. Tell the app to stop being so strict about origin matching
+      - CHECK_ORIGIN=false
+      - PROTOCOL_HEADER=x-forwarded-proto
+      - HOST_HEADER=x-forwarded-host
 
     volumes:
       - ./chatui.env.local:/app/.env.local:ro
@@ -40,3 +59,4 @@ services:
 volumes:
   chatui-db:
   chatui-models:
+  qdrant_data:
