@@ -10,6 +10,42 @@ services:
     volumes:
       - qdrant_data:/data
       
+  tei-embedding:
+    profiles: ["local"]
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    # For GPU, use: ghcr.io/huggingface/text-embeddings-inference:1.5
+    ports:
+      - "8081:80"
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}
+    volumes:
+      - tei-embedding-data:/data
+    command: --model-id ${TEI_EMBEDDING_MODEL:-BAAI/bge-base-en-v1.5}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  tei-reranker:
+    profiles: ["local"]
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    # For GPU, use: ghcr.io/huggingface/text-embeddings-inference:1.5
+    ports:
+      - "8082:80"
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}
+    volumes:
+      - tei-reranker-data:/data
+    command: --model-id ${TEI_RERANKER_MODEL:-BAAI/bge-reranker-base}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
   chabo:
     build:
       context: ..
@@ -19,6 +55,8 @@ services:
     environment:
       - HF_TOKEN=${HF_TOKEN}
       - QDRANT_API_KEY=${QDRANT_API_KEY}
+      - EMBEDDING_ENDPOINT_URL=${EMBEDDING_ENDPOINT_URL}
+      - RERANKER_ENDPOINT_URL=${RERANKER_ENDPOINT_URL}
       # Uncomment if using alternative LLM providers:
       # - OPENAI_API_KEY=${OPENAI_API_KEY}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
@@ -60,3 +98,5 @@ volumes:
   chatui-db:
   chatui-models:
   qdrant_data:
+  tei-embedding-data:
+  tei-reranker-data:
