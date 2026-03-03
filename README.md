@@ -108,12 +108,11 @@ Edit `docker-compose/.env`:
 |----------|----------|-------------|
 | `HF_TOKEN` | Yes | HuggingFace API token |
 | `QDRANT_API_KEY` | Yes | Qdrant API key |
-| `UI_ORIGIN` | For non-HTTPS | ChatUI origin URL (e.g. `http://your-server-ip:3000`) |
 | `COMPOSE_PROFILES` | No | Comma-separated profiles to enable (see table below) |
-| `EMBEDDING_ENDPOINT_URL` | If using local TEI | `http://tei-embedding:80` |
-| `RERANKER_ENDPOINT_URL` | If using local TEI | `http://tei-reranker:80` |
 | `TEI_EMBEDDING_MODEL` | If using local TEI | Model ID (default: `BAAI/bge-base-en-v1.5`) |
 | `TEI_RERANKER_MODEL` | If using local TEI | Model ID (default: `BAAI/bge-reranker-base`) |
+
+Embedding and reranker endpoint URLs are configured in `params.cfg` under `[hf_endpoints]`. When using local TEI, set them to `http://tei-embedding:80` and `http://tei-reranker:80`.
 
 **2. ChatUI config** — controls the frontend app name, model endpoints, and UI settings:
 

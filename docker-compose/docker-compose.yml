@@ -63,8 +63,6 @@ services:
     environment:
       - HF_TOKEN=${HF_TOKEN}
       - QDRANT_API_KEY=${QDRANT_API_KEY}
-      - EMBEDDING_ENDPOINT_URL=${EMBEDDING_ENDPOINT_URL}
-      - RERANKER_ENDPOINT_URL=${RERANKER_ENDPOINT_URL}
       # Uncomment if using alternative LLM providers:
       # - OPENAI_API_KEY=${OPENAI_API_KEY}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
@@ -86,12 +84,12 @@ services:
     ports:
       - "3000:3000"
     # For testing in non-HTTPS environments, enable this:
-    environment:
-      - ORIGIN=${UI_ORIGIN}
-      # 2. Tell the app to stop being so strict about origin matching
-      - CHECK_ORIGIN=false
-      - PROTOCOL_HEADER=x-forwarded-proto
-      - HOST_HEADER=x-forwarded-host
+    # environment:
+    #   - ORIGIN="http://localhost:3000"
+    #   # Tell the app to stop being so strict about origin matching
+    #   - CHECK_ORIGIN=false
+    #   - PROTOCOL_HEADER=x-forwarded-proto
+    #   - HOST_HEADER=x-forwarded-host
 
     volumes:
       - ./chatui.env.local:/app/.env.local:ro
