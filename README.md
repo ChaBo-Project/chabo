@@ -88,7 +88,13 @@ Run ChaBo with a [ChatUI](https://github.com/huggingface/chat-ui) frontend as a 
 
 #### Configuration
 
-All configuration lives in the `docker-compose/` directory. Two files need to be set up:
+Configuration is split across three files:
+
+- **`params.cfg`** (repo root) — Qdrant connection, retrieval parameters, generator/LLM settings, and ingestor chunking config. This is the same file used in Option 1, but when using local TEI or local Qdrant, the endpoint URLs in `.env` override what's in `params.cfg`.
+- **`docker-compose/.env`** — API keys, Compose profiles, and endpoint overrides for local TEI containers.
+- **`docker-compose/chatui.env.local`** — ChatUI frontend settings (app name, model endpoints, UI options).
+
+Set up the Docker Compose files:
 
 **1. Environment file** — controls backend services and Compose profiles:
 
