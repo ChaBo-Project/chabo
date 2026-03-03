@@ -49,6 +49,12 @@ services:
       start_period: 30s
 
   chabo:
+    # local embedding services can take a while to startup 
+    depends_on:
+        tei-embedding:
+          condition: service_healthy
+        tei-reranker:
+          condition: service_healthy
     build:
       context: ..
       dockerfile: docker-compose/backend.Dockerfile
@@ -74,7 +80,6 @@ services:
       start_period: 10s
 
   chatui:
-    profiles: ["ui"]
     build:
       context: .
       dockerfile: chatui.Dockerfile

@@ -23,47 +23,15 @@ A RAG (Retrieval-Augmented Generation) orchestrator API built with FastAPI, Lang
 
 **Supported LLM Providers:** HuggingFace, OpenAI, Anthropic, Cohere
 
-## Prerequisites
+## Deployment
 
-- Python 3.11+
-- Access to HuggingFace Inference Endpoints (embedding, reranking, LLM)
-- Qdrant vector database instance (existing)
-- Docker (optional, for containerized deployment)
+### Option 1: Backend Only (HuggingFace Spaces / Standalone)
 
-## Quick Start
+Deploy ChaBo as a standalone API using the root `Dockerfile`. This is the setup used on HuggingFace Spaces, where a frontend (e.g. ChatUI) runs separately.
 
-### Local Development
+**Prerequisites:** Remote HuggingFace Inference Endpoints for embedding and reranking, an existing Qdrant instance, and API keys.
 
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure (see Configuration section)
-cp params.cfg.example params.cfg
-# Edit params.cfg with your endpoints
-
-# Set required environment variables
-export HF_TOKEN=your_huggingface_token
-export QDRANT_API_KEY=your_qdrant_api_key
-
-# Run the application
-python src/main.py
-```
-
-### Docker
-
-```bash
-# Build and run
-docker build -t chabo .
-docker run -p 7860:7860 \
-  -e HF_TOKEN=your_token \
-  -e QDRANT_API_KEY=your_key \
-  chabo
-```
-
-## Configuration
-
-### params.cfg
+#### Configuration
 
 Edit `params.cfg` with your service endpoints:
 
@@ -92,7 +60,7 @@ CONTEXT_META_FIELDS = filename,project_id,document_source
 TITLE_META_FIELDS = filename,page
 ```
 
-### Environment Variables
+Pass API keys as environment variables at runtime:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -102,11 +70,7 @@ TITLE_META_FIELDS = filename,page
 | `ANTHROPIC_API_KEY` | If using Anthropic | Anthropic API key |
 | `COHERE_API_KEY` | If using Cohere | Cohere API key |
 
-## Deployment Options
-
-### Option 1: Backend Only (HuggingFace Spaces / Standalone)
-
-Use the root `Dockerfile` to deploy ChaBo as a standalone API. This is the setup used on HuggingFace Spaces, where ChatUI runs as a separate Space.
+#### Build and Run
 
 ```bash
 docker build -t chabo .
@@ -116,31 +80,68 @@ docker run -p 7860:7860 \
   chabo
 ```
 
-### Option 2: Full Stack with ChatUI (Docker Compose)
+---
 
-The `docker-compose/` directory contains everything needed to run both ChaBo and a [ChatUI](https://github.com/huggingface/chat-ui) frontend as a single stack. ChatUI uses a pre-built image from GHCR (`ghcr.io/m-tyrrell/chat-ui-db:0.9.4-patched`) which includes an embedded MongoDB instance.
+### Option 2: Full Stack with Docker Compose
 
-**Setup:**
+Run ChaBo with a [ChatUI](https://github.com/huggingface/chat-ui) frontend as a single stack. Docker Compose profiles optionally add local embedding/reranking (TEI) and a local Qdrant instance — so you can go fully self-contained with no external dependencies beyond an LLM provider.
+
+#### Configuration
+
+All configuration lives in the `docker-compose/` directory. Two files need to be set up:
+
+**1. Environment file** — controls backend services and Compose profiles:
 
 ```bash
-# 1. Create the ChatUI configuration from the template
+cp docker-compose/.env.example docker-compose/.env
+```
+
+Edit `docker-compose/.env`:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `HF_TOKEN` | Yes | HuggingFace API token |
+| `QDRANT_API_KEY` | Yes | Qdrant API key |
+| `UI_ORIGIN` | For non-HTTPS | ChatUI origin URL (e.g. `http://your-server-ip:3000`) |
+| `COMPOSE_PROFILES` | No | Comma-separated profiles to enable (see table below) |
+| `EMBEDDING_ENDPOINT_URL` | If using local TEI | `http://tei-embedding:80` |
+| `RERANKER_ENDPOINT_URL` | If using local TEI | `http://tei-reranker:80` |
+| `TEI_EMBEDDING_MODEL` | If using local TEI | Model ID (default: `BAAI/bge-base-en-v1.5`) |
+| `TEI_RERANKER_MODEL` | If using local TEI | Model ID (default: `BAAI/bge-reranker-base`) |
+
+**2. ChatUI config** — controls the frontend app name, model endpoints, and UI settings:
+
+```bash
 cp docker-compose/chatui.env.local.template docker-compose/chatui.env.local
+# Edit chatui.env.local to customize (endpoint URLs are pre-configured for the Docker network)
+```
 
-# 2. Edit chatui.env.local to customize app name, descriptions, etc.
-#    (endpoint URLs are pre-configured for the internal Docker network)
+#### Compose Profiles
 
-# 3. Set your backend environment variables
-export HF_TOKEN=your_huggingface_token
-export QDRANT_API_KEY=your_qdrant_api_key
-#  # For testing in non-HTTPS environments, it is http://138.197.179.117:3000
-export UI_ORIGIN=your_ui_url
-# 4. Build and start only backend services
+Profiles add optional services on top of the base stack (ChaBo + ChatUI):
+
+| Profile | Services added | Use case |
+|---------|---------------|----------|
+| `local` | `tei-embedding` (port 8081), `tei-reranker` (port 8082) | Self-hosted embedding and reranking instead of remote HF endpoints |
+| `infra` | `qdrant` (port 6333) | Local Qdrant instance instead of a remote one |
+
+Set profiles in `.env` (e.g. `COMPOSE_PROFILES=local,infra`) or via the CLI.
+
+> **Important:** When using local TEI, the embedding model (`TEI_EMBEDDING_MODEL`) must match the model used to create your Qdrant collection. Mismatched models will produce poor search results.
+
+#### Build and Run
+
+```bash
+# Start base stack (ChaBo + ChatUI, using remote HF endpoints and remote Qdrant)
 docker-compose -f docker-compose/docker-compose.yml up --build
 
-# or build and run backend(chabo) and qdrant (infra) and ui services
-docker-compose -f docker-compose/docker-compose.yml --profile infra --profile ui up -d --build
+# Start with local TEI embedding/reranking
+COMPOSE_PROFILES=local docker-compose -f docker-compose/docker-compose.yml up --build
 
-# Or run in detached mode
+# Start fully self-contained (local TEI + local Qdrant)
+COMPOSE_PROFILES=local,infra docker-compose -f docker-compose/docker-compose.yml up --build
+
+# Run in detached mode
 docker-compose -f docker-compose/docker-compose.yml up -d --build
 
 # View logs
@@ -148,81 +149,41 @@ docker-compose -f docker-compose/docker-compose.yml logs -f
 
 # Stop services
 docker-compose -f docker-compose/docker-compose.yml down
+```
 
-# To push your embedding data into the Qdrant vector database, replace the data/data.parquet with your own data
-#  run the following command. 
-# **Note:** Ensure you use the same collection name as defined in your `params.cfg` \
-# and the correct vector dimension for your embedding model (e.g., 1024 for BGE-large).
+**First run with local TEI:** The TEI containers download models on first startup (1-3 minutes depending on model size). Models are cached in Docker volumes, so subsequent starts are fast.
 
+**GPU support:** The default TEI images are CPU-only. For GPU acceleration, edit `docker-compose/docker-compose.yml` and swap in the GPU image variant (see comments in the file).
+
+#### Data Upload
+
+To populate a Qdrant collection with your embedding data, place your data file at `data/data.parquet` and run:
+
+```bash
 docker exec -it docker-compose_chabo_1 python src/components/ingestor/upload_parquet.py \
     --file data/data.parquet \
     --collection YOUR_COLLECTION_NAME \
     --vector_size 1024
-
-**Service URLs:**
-- ChatUI Frontend: http://localhost:3000
-- ChaBo API: http://localhost:7860
-- API Documentation: http://localhost:7860/docs
-
-**How it works:**
-- The `chabo` service builds from the repo root using `backend.Dockerfile`
-- The `chatui` service builds from `chatui.Dockerfile`, which pulls the pre-built ChatUI image from GHCR
-- ChatUI connects to ChaBo via the internal Docker network (`http://chabo:7860`)
-- MongoDB data and model directories are persisted via Docker volumes
-
-### Testing ChatUI over HTTP (Non-HTTPS)
-
-When deploying to a server without HTTPS (e.g., a VPS accessed via IP address), ChatUI requires two additional environment variables set on the `chatui` service in `docker-compose.yml`:
-
-In `docker-compose.yml`:
-```yaml
-environment:
-  - ORIGIN=http://<your-server-ip>:3000
 ```
 
-In `chatui.env.local`:
-```
-ALLOW_INSECURE_COOKIES=true
-```
+> **Note:** Use the same collection name as in your `params.cfg` and the correct vector dimension for your embedding model (e.g. 1024 for BGE-large, 768 for BGE-base).
 
-- **`ORIGIN`**: Tells SvelteKit the expected origin for CSRF protection. Without this, form submissions (e.g., sending a message) return a 403 error.
-- **`ALLOW_INSECURE_COOKIES`**: Allows session cookies over plain HTTP. By default, ChatUI sets cookies as `Secure` (HTTPS-only), which causes the browser to silently drop them over HTTP, resulting in 403 errors on conversation pages.
+#### Service URLs
 
-These are not needed when running behind HTTPS (e.g., HuggingFace Spaces, or behind a reverse proxy like Caddy/nginx with TLS).
+| Service | URL | Description |
+|---------|-----|-------------|
+| ChatUI | http://localhost:3000 | Chat frontend |
+| ChaBo API | http://localhost:7860 | Backend API |
+| API Docs | http://localhost:7860/docs | Interactive documentation |
 
-## Troubleshooting: ChatUI Not Starting (Docker Compose)
+## Non-HTTPS Deployments
 
-If the ChatUI container starts but you cannot connect on port 3000, the most likely cause is MongoDB failing to start inside the container.
+When deploying to a server without HTTPS (e.g. a VPS accessed via IP address), ChatUI needs two settings to avoid 403 errors:
 
-**Symptoms:**
-- ChaBo backend is accessible on port 7860, but ChatUI on port 3000 is unreachable
-- `docker-compose logs chatui` shows `MongoServerSelectionError: connect ECONNREFUSED 127.0.0.1:27017`
+1. Set `UI_ORIGIN` in `docker-compose/.env` to your server's URL (e.g. `http://your-server-ip:3000`). This tells SvelteKit the expected origin for CSRF protection.
+2. Uncomment `ALLOW_INSECURE_COOKIES=true` in `docker-compose/chatui.env.local`. This allows session cookies over plain HTTP.
 
-**Root cause:** The pre-built ChatUI image (`ghcr.io/m-tyrrell/chat-ui-db:0.9.4-patched`) is `linux/amd64` only. On Apple Silicon (ARM) Macs, it runs under emulation, which can cause the embedded MongoDB to fail silently.
-
-**Diagnosis steps:**
-
-1. Check if the chatui container is actually running:
-   ```bash
-   docker-compose -f docker-compose/docker-compose.yml ps
-   ```
-
-2. Check the chatui logs for MongoDB connection errors:
-   ```bash
-   docker-compose -f docker-compose/docker-compose.yml logs chatui
-   ```
-
-3. Look for permission errors (`chown: Operation not permitted`) — this indicates the startup script lacks root privileges to set up MongoDB data directories.
-
-**Fixes applied:**
-
-1. **Permission fix:** Removed `USER user` before `CMD` in `chatui.Dockerfile` so the startup script runs as root and can `chown` the volume directories and start MongoDB.
-
-2. **Platform declaration:** Added `platform: linux/amd64` to the chatui service in `docker-compose.yml` to explicitly request amd64 emulation on ARM hosts.
-
-**If MongoDB still fails under emulation (ARM hosts):**
-
-A more robust solution is to run MongoDB as a separate container using the official `mongo` image (which has native ARM builds) and point ChatUI at it by changing `MONGODB_URL` in `chatui.env.local` from `mongodb://localhost:27017` to `mongodb://mongodb:27017`. This requires adding a `mongodb` service to `docker-compose.yml`.
+Not needed behind HTTPS (e.g. HuggingFace Spaces, or behind a reverse proxy with TLS).
 
 ## API Endpoints
 
@@ -233,6 +194,7 @@ A more robust solution is to run MongoDB as a separate container using the offic
 | `/docs` | GET | Interactive API documentation |
 | `/chatfed-ui-stream` | POST | Text query streaming (LangServe) |
 | `/chatfed-with-file-stream` | POST | File upload + query streaming (LangServe) |
+
 
 ## License
 
