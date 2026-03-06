@@ -3,3 +3,4 @@
 __pycache__/
 NOTES.md
 docker-compose/chatui.env.local
+docker-compose/.env
