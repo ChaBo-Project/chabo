@@ -145,6 +145,7 @@ COMPOSE_PROFILES=local docker-compose -f docker-compose/docker-compose.yml up --
 
 # Start fully self-contained (local TEI + local Qdrant)
 COMPOSE_PROFILES=local,infra docker-compose -f docker-compose/docker-compose.yml up --build
+# or docker-compose -f docker-compose/docker-compose.yml --profile infra --profile local up -d --build
 
 # Run in detached mode
 docker-compose -f docker-compose/docker-compose.yml up -d --build

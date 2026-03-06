@@ -1,6 +1,8 @@
 .env
+.env.local
 *.DS_Store
 __pycache__/
 NOTES.md
 docker-compose/chatui.env.local
 docker-compose/.env
+!.env.example
