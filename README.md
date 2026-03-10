@@ -54,8 +54,8 @@ PROVIDER = huggingface
 MODEL = meta-llama/Meta-Llama-3-8B-Instruct
 MAX_TOKENS = 1024
 TEMPERATURE = 0.1
-INFERENCE_PROVIDER = novita
-ORGANIZATION = GIZ
+INFERENCE_PROVIDER = ABC
+ORGANIZATION = XYZ
 CONTEXT_META_FIELDS = filename,project_id,document_source
 TITLE_META_FIELDS = filename,page
 ```
