@@ -114,7 +114,7 @@ class Generator:
             "anthropic": lambda: ChatAnthropic(model=self.model, anthropic_api_key=self.auth_config["api_key"], **common_params),
             "cohere": lambda: ChatCohere(model=self.model, cohere_api_key=self.auth_config["api_key"], **common_params),
             "huggingface": lambda: self._get_hf_chat_model(**common_params),
-            "azure": lambda: ChatOpenAI(model=self.model, openai_api_key=self.auth_config["api_key"], base_url = self.azure_endpoint, default_headers={"api-key": self.auth_config["api_key"]}, temperature=self.temperature, streaming=True)
+            "azure": lambda: ChatOpenAI(model=self.model, openai_api_key=self.auth_config["api_key"], base_url=self.azure_endpoint, extra_body={"max_tokens": self.max_tokens}, temperature=self.temperature, streaming=True)
         }
 
         if self.provider not in providers:
