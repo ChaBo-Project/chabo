@@ -15,8 +15,8 @@ import datetime
 import os
 import sys
 
-# Ensure repo root is on the path so src/ imports resolve
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# Add src/ to path so imports match how main.py resolves them
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
 
 from test_components import test_retriever_unit, run_full_pipeline_test
 
@@ -40,7 +40,7 @@ SAMPLE_QUERY = "What is the purpose of this system?"
 async def check_qdrant():
     """Verify Qdrant is reachable and the configured collection exists."""
     try:
-        from src.components.utils import getconfig
+        from components.utils import getconfig
         from qdrant_client import QdrantClient
 
         url = getconfig("qdrant", "url")
@@ -67,7 +67,7 @@ async def check_embedding():
     """Verify the embedding endpoint returns a valid vector."""
     try:
         import httpx
-        from src.components.utils import getconfig
+        from components.utils import getconfig
 
         url = getconfig("hf_endpoints", "embedding_endpoint_url")
         token = os.getenv("HF_TOKEN")
@@ -90,7 +90,7 @@ async def check_reranker():
     """Verify the reranker endpoint returns scores."""
     try:
         import httpx
-        from src.components.utils import getconfig
+        from components.utils import getconfig
 
         url = getconfig("hf_endpoints", "reranker_endpoint_url")
         token = os.getenv("HF_TOKEN")
@@ -128,10 +128,10 @@ async def main():
     else:
         # --- Component checks (only if connectivity passed) ---
         logger.info("\n--- Step 2: Component Checks ---")
-        from src.components.retriever.retriever_orchestrator import Retriever
-        from src.components.generator.generator_orchestrator import Generator
+        from components.retriever.retriever_orchestrator import create_retriever_from_config
+        from components.generator.generator_orchestrator import Generator
 
-        retriever = Retriever()
+        retriever = create_retriever_from_config("params.cfg")
         generator = Generator()
 
         retriever_result = await test_retriever_unit(SAMPLE_QUERY, retriever)

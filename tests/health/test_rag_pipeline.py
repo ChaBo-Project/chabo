@@ -4,8 +4,8 @@ import datetime
 import os
 import sys
 
-# Ensure repo root is on the path so src/ imports resolve
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+# Add src/ to path so imports match how main.py resolves them
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
 
 from test_components import test_retriever_unit, run_full_pipeline_test
 
@@ -64,10 +64,10 @@ async def run_single_test(case_name, query, retriever, generator):
 async def main():
     setup_logging()
 
-    from src.components.retriever.retriever_orchestrator import Retriever
-    from src.components.generator.generator_orchestrator import Generator
+    from components.retriever.retriever_orchestrator import create_retriever_from_config
+    from components.generator.generator_orchestrator import Generator
 
-    retriever = Retriever()
+    retriever = create_retriever_from_config("params.cfg")
     generator = Generator()
 
     # Add your test queries here

@@ -9,3 +9,5 @@ docker-compose/.env
 .chabo_env/
 chabo_env/
 CLAUDE.md
+tests/eval/results/
+tests/health/logs/
