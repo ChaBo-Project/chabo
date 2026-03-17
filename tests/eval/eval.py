@@ -190,5 +190,20 @@ async def run_sample_eval(input_file=None):
 
 
 if __name__ == "__main__":
-    # Options: run_retrieval_only | run_evaluation_batch | run_sample_eval
-    asyncio.run(run_retrieval_only())
+    import argparse
+
+    parser = argparse.ArgumentParser(description="ChaBo RAG Evaluation")
+    parser.add_argument(
+        "--mode",
+        choices=["retrieval", "batch", "sample"],
+        default="retrieval",
+        help="retrieval: run Stage 1 and save results | batch: judge with LLM (resumes from checkpoint) | sample: judge first 2 questions only"
+    )
+    args = parser.parse_args()
+
+    modes = {
+        "retrieval": run_retrieval_only,
+        "batch": run_evaluation_batch,
+        "sample": run_sample_eval,
+    }
+    asyncio.run(modes[args.mode]())

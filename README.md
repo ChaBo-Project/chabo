@@ -285,17 +285,20 @@ questions = [
 
 ### Run evaluation
 
+Pass the `--mode` flag to select which stage to run:
+
 ```bash
 # Step 1: Run retrieval and save results
-python tests/eval/eval.py  # runs run_retrieval_only() by default
+python tests/eval/eval.py --mode retrieval
 
-# Step 2: Judge retrieved results with LLM
-# Edit the last line in eval.py to switch the entry point:
-#   asyncio.run(run_evaluation_batch())
+# Step 2: Judge retrieved results with LLM (resumes from checkpoint if interrupted)
+python tests/eval/eval.py --mode batch
 
 # Quick sample run (first 2 questions only, useful for testing)
-#   asyncio.run(run_sample_eval())
+python tests/eval/eval.py --mode sample
 ```
+
+`--mode retrieval` is the default if no flag is provided.
 
 Results are saved to `tests/eval/results/` (gitignored).
 
