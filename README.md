@@ -21,7 +21,7 @@ A RAG (Retrieval-Augmented Generation) orchestrator API built with FastAPI, Lang
 
 **Pipeline:** Query → Embed → Vector Search → Rerank → Generate (with citations)
 
-**Supported LLM Providers:** HuggingFace, OpenAI, Anthropic, Cohere
+**Supported LLM Providers:** HuggingFace, OpenAI, Anthropic, Cohere, Azure OpenAI
 
 ## Deployment
 
@@ -69,6 +69,7 @@ Pass API keys as environment variables at runtime:
 | `OPENAI_API_KEY` | If using OpenAI | OpenAI API key |
 | `ANTHROPIC_API_KEY` | If using Anthropic | Anthropic API key |
 | `COHERE_API_KEY` | If using Cohere | Cohere API key |
+| `AZURE_API_KEY` | If using Azure OpenAI | Azure OpenAI API key |
 
 #### Build and Run
 
@@ -201,6 +202,54 @@ Not needed behind HTTPS (e.g. HuggingFace Spaces, or behind a reverse proxy with
 | `/chatfed-ui-stream` | POST | Text query streaming (LangServe) |
 | `/chatfed-with-file-stream` | POST | File upload + query streaming (LangServe) |
 
+
+## Health Checks & Testing
+
+The `tests/health/` directory contains scripts to verify your setup before or after deployment. These run **locally outside Docker**, against already-running services, using the project's virtual environment.
+
+### Prerequisites
+
+Before running any health checks ensure:
+1. Services are up — Qdrant, embedding endpoint, reranker endpoint
+2. `params.cfg` is configured with correct endpoint URLs and collection name
+3. Required env vars are exported (`HF_TOKEN`, `QDRANT_API_KEY`, etc.)
+
+### Setup
+
+```bash
+# Navigate to repo root — required for src/ imports to resolve
+cd /path/to/chabo
+
+```
+
+### Running the full health suite
+
+```bash
+python tests/health/run_all.py
+```
+
+`run_all.py` checks each component in order and prints a pass/fail summary:
+
+| Step | Check | What it verifies |
+|------|-------|-----------------|
+| 1 | Qdrant | Reachable and configured collection exists |
+| 1 | Embedding endpoint | Returns a valid vector |
+| 1 | Reranker endpoint | Returns scores |
+| 2 | Retriever unit | Full retrieval + reranking returns ranked documents |
+| 2 | RAG pipeline | End-to-end retrieval → streaming generation with a sample query |
+
+Step 2 (component checks) only runs if all Step 1 connectivity checks pass. Logs are written to `tests/health/logs/` with a timestamp for each run.
+
+### Running individual scripts
+
+```bash
+# Retriever + pipeline tests only (skips connectivity pre-checks)
+python tests/health/test_rag_pipeline.py
+```
+
+Edit the `test_cases` list in `test_rag_pipeline.py` to add your own queries.
+
+---
 
 ## License
 

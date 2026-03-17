@@ -7,4 +7,5 @@ docker-compose/chatui.env.local
 docker-compose/.env
 !.env.example
 .chabo_env/
+chabo_env/
 CLAUDE.md
