@@ -251,6 +251,56 @@ Edit the `test_cases` list in `test_rag_pipeline.py` to add your own queries.
 
 ---
 
+## RAG Evaluation
+
+The `tests/eval/` directory contains scripts to evaluate retrieval and reranking quality using an LLM-as-judge approach. Like health checks, these run locally outside Docker with the venv active from the repo root.
+
+### How it works
+
+Evaluation runs in two stages:
+
+**Stage 1 — Retrieval** (`run_retrieval_only`)
+Runs each question through the full retriever pipeline, capturing both raw vector search candidates and final reranked results. Output saved to `tests/eval/results/retrieval_eval_results.json`.
+
+**Stage 2 — LLM Judging** (`run_evaluation_batch`)
+Loads the retrieval results and uses the configured LLM to judge each retrieved document for relevance. Saves a judged report to `tests/eval/results/judged_eval_report.json`. Supports **checkpointing** — if interrupted, it resumes from where it left off.
+
+### Setup
+
+```bash
+cd /path/to/chabo
+source chabo_env/bin/activate
+```
+
+### Define your test questions
+
+Edit `tests/eval/test_questions.py` to add your questions:
+
+```python
+questions = [
+    "Your question here",
+    "Another question",
+]
+```
+
+### Run evaluation
+
+```bash
+# Step 1: Run retrieval and save results
+python tests/eval/eval.py  # runs run_retrieval_only() by default
+
+# Step 2: Judge retrieved results with LLM
+# Edit the last line in eval.py to switch the entry point:
+#   asyncio.run(run_evaluation_batch())
+
+# Quick sample run (first 2 questions only, useful for testing)
+#   asyncio.run(run_sample_eval())
+```
+
+Results are saved to `tests/eval/results/` (gitignored).
+
+---
+
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE) for details.
