@@ -29,6 +29,7 @@ def get_auth_for_generator(provider: str) -> dict:
         "huggingface": {"api_key": os.getenv("HF_TOKEN")},
         "anthropic": {"api_key": os.getenv("ANTHROPIC_API_KEY")},
         "cohere": {"api_key": os.getenv("COHERE_API_KEY")},
+        "azure": {"api_key": os.getenv("AZURE_API_KEY")},
     }
     
     if provider not in auth_configs:

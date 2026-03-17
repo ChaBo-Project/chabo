@@ -19,6 +19,7 @@ from .sources import (
 )
 
 
+
 class Generator:
     """
     A generic RAG answer generation component that supports multiple LLM providers 
@@ -33,6 +34,7 @@ class Generator:
         "temperature":        ("generator", "TEMPERATURE", "GENERATOR_TEMPERATURE", 0.1),
         "inference_provider": ("generator", "INFERENCE_PROVIDER", "GENERATOR_INFERENCE_PROVIDER"),
         "organization":       ("generator", "ORGANIZATION", "GENERATOR_ORGANIZATION"),
+        "azure_endpoint":     ("generator", "AZURE_ENDPOINT", "GENERATOR_AZURE_ENDPOINT"),
 
         # New: Metadata/RAG Configuration Parameters
         # Note: Fallbacks are strings that need to be parsed into lists later.
@@ -84,6 +86,7 @@ class Generator:
         self.temperature = resolved_config['temperature']
         self.inference_provider = resolved_config.get('inference_provider')
         self.organization = resolved_config.get('organization')
+        self.azure_endpoint = resolved_config.get('azure_endpoint')
 
         #  Assign resolved values to instance attributes (RAG/Metadata)
         self.context_metadata_fields = resolved_config['context_metadata_fields']
@@ -111,6 +114,7 @@ class Generator:
             "anthropic": lambda: ChatAnthropic(model=self.model, anthropic_api_key=self.auth_config["api_key"], **common_params),
             "cohere": lambda: ChatCohere(model=self.model, cohere_api_key=self.auth_config["api_key"], **common_params),
             "huggingface": lambda: self._get_hf_chat_model(**common_params),
+            "azure": lambda: ChatOpenAI(model=self.model, openai_api_key=self.auth_config["api_key"], base_url=self.azure_endpoint, extra_body={"max_tokens": self.max_tokens}, temperature=self.temperature, streaming=True)
         }
 
         if self.provider not in providers:
