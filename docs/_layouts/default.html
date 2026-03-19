@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ site.title }} — {{ site.description }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ site.baseurl }}/assets/css/main.css">
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a href="{{ site.baseurl }}/" class="nav-logo">Cha<span>Bo</span></a>
+  <ul class="nav-links">
+    <li><a href="#what">What it is</a></li>
+    <li><a href="#features">Features</a></li>
+    <li><a href="#usecases">Use cases</a></li>
+    <li><a href="#how">How it works</a></li>
+    <li><a href="{{ site.readme_url }}" class="nav-cta">Get started →</a></li>
+  </ul>
+</nav>
+
+{{ content }}
+
+<!-- FOOTER -->
+<footer>
+  <a href="{{ site.baseurl }}/" class="footer-logo">Cha<span>Bo</span></a>
+  <ul class="footer-links">
+    <li><a href="{{ site.readme_url }}">Documentation</a></li>
+    <li><a href="{{ site.github_repo }}">GitHub</a></li>
+    <li><a href="#features">Features</a></li>
+  </ul>
+  <span class="footer-copy">{{ site.footer.license }}</span>
+</footer>
+
+<script>
+  const revealEls = document.querySelectorAll('.reveal');
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        setTimeout(() => entry.target.classList.add('visible'), 80);
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+  revealEls.forEach(el => observer.observe(el));
+</script>
+
+</body>
+</html>

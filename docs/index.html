@@ -1,0 +1,148 @@
+---
+layout: default
+---
+
+<!-- ── HERO ── -->
+<section class="hero">
+  <div class="hero-bg"></div>
+  <div class="hero-grid"></div>
+  <div class="hero-eyebrow">{{ site.hero.eyebrow }}</div>
+  <h1 class="hero-title">
+    {{ site.hero.line1 }}<br>
+    {{ site.hero.line2 }}<br>
+    <em>{{ site.hero.line3 }}</em>
+  </h1>
+  <p class="hero-sub">{{ site.hero.subtitle }}</p>
+  <div class="hero-actions">
+    <a href="{{ site.readme_url }}" class="btn-primary">Get started →</a>
+    <a href="{{ site.github_repo }}" class="btn-secondary">View on GitHub</a>
+  </div>
+  <div class="hero-badges">
+    {% for badge in site.hero.badges %}
+    <div class="badge"><div class="badge-dot"></div>{{ badge }}</div>
+    {% endfor %}
+  </div>
+</section>
+
+<!-- ── PROBLEM ── -->
+<section class="problem">
+  <div class="section-inner">
+    <div>
+      <div class="problem-label reveal">{{ site.problem.label }}</div>
+      <h2 class="problem-title reveal">
+        {{ site.problem.title_start }} <em>{{ site.problem.title_em }}</em> {{ site.problem.title_end }}
+      </h2>
+    </div>
+    <div class="problem-points">
+      {% for point in site.problem.points %}
+      <div class="problem-point reveal">
+        <strong>{{ point.heading }}</strong>
+        <p>{{ point.text }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<!-- ── EXPLAINER ── -->
+<section class="explainer" id="what">
+  <div class="section-inner">
+    <div>
+      <div class="explainer-label reveal">{{ site.explainer.label }}</div>
+      <h2 class="explainer-title reveal">{{ site.explainer.title }}</h2>
+    </div>
+    <div class="explainer-body">
+      <p class="reveal">{{ site.explainer.body1 }}</p>
+      <div class="pipeline reveal">
+        <div class="pipe-step">Your documents</div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step highlight">ChaBo</div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-step">Smart answers + citations</div>
+      </div>
+      <p class="reveal">{{ site.explainer.body2 }}</p>
+      <div class="explainer-note reveal">
+        <strong>Plain English:</strong> {{ site.explainer.plain_english }}
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── FEATURES ── -->
+<section class="features" id="features">
+  <div class="section-inner">
+    <div class="features-label reveal">{{ site.features.label }}</div>
+    <h2 class="features-title reveal">{{ site.features.title }}</h2>
+    <div class="features-grid reveal">
+      {% for item in site.features.items %}
+      <div class="feature-card">
+        <div class="feature-icon">{{ item.icon }}</div>
+        <div class="feature-name">{{ item.title }}</div>
+        <p class="feature-desc">{{ item.desc }}</p>
+        <span class="feature-jargon">{{ item.jargon }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<!-- ── USE CASES ── -->
+<section class="usecases" id="usecases">
+  <div class="section-inner">
+    <div class="usecases-label reveal">{{ site.usecases.label }}</div>
+    <h2 class="usecases-title reveal">{{ site.usecases.title }}</h2>
+    <div class="usecases-list reveal">
+      {% for item in site.usecases.items %}
+      <div class="usecase-item">
+        <div class="usecase-num">0{{ forloop.index }}</div>
+        <div class="usecase-content">
+          <div class="usecase-name">{{ item.title }}</div>
+          <p class="usecase-desc">{{ item.desc }}</p>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<!-- ── HOW IT WORKS ── -->
+<section class="how" id="how">
+  <div class="section-inner">
+    <div class="how-label reveal">{{ site.how.label }}</div>
+    <h2 class="how-title reveal">{{ site.how.title }}</h2>
+    <div class="how-steps reveal">
+      {% for step in site.how.steps %}
+      <div class="how-step">
+        <div class="step-num">0{{ forloop.index }}</div>
+        <div class="step-title">{{ step.title }}</div>
+        <p class="step-desc">{{ step.desc }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<!-- ── STACK ── -->
+<section class="stack">
+  <div class="section-inner">
+    <span class="stack-label">{{ site.stack.label }}</span>
+    <div class="stack-divider"></div>
+    <div class="stack-items">
+      {% for item in site.stack.items %}
+      <div class="stack-item"><div class="stack-item-dot"></div>{{ item }}</div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<!-- ── CTA ── -->
+<section class="cta">
+  <div class="cta-bg"></div>
+  <div class="cta-label reveal">{{ site.cta.label }}</div>
+  <h2 class="cta-title reveal">{{ site.cta.title_start }} <em>{{ site.cta.title_em }}</em></h2>
+  <p class="cta-sub reveal">{{ site.cta.subtitle }}</p>
+  <div class="cta-actions reveal">
+    <a href="{{ site.readme_url }}" class="btn-primary">Read the docs →</a>
+    <a href="{{ site.github_repo }}" class="btn-secondary">Star on GitHub ☆</a>
+  </div>
+</section>
