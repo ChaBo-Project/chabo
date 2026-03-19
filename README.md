@@ -247,7 +247,34 @@ Step 2 (component checks) only runs if all Step 1 connectivity checks pass. Logs
 python tests/health/test_rag_pipeline.py
 ```
 
-Edit the `test_cases` list in `test_rag_pipeline.py` to add your own queries.
+`test_rag_pipeline.py` is for manual, qualitative spot-checks during development — inspect
+logs to verify retrieval scores and response quality for specific scenarios.
+
+Edit the `test_cases` list to add your own scenarios. The examples below use an
+**agriculture knowledge base** as a reference — imagine a RAG system built on crop guides,
+irrigation manuals, and farming practices. The scenarios themselves apply to any domain:
+swap in questions relevant to your own corpus.
+
+```python
+test_cases = [
+    # In-domain factual — system should retrieve and answer well
+    ("factual_question", "What fertilizer is recommended for wheat in sandy soil?"),
+
+    # In-domain summary — requires synthesising multiple docs
+    ("summary_question", "What are the irrigation methods used for sugarcane?"),
+
+    # Out-of-domain / hallucination risk — completely outside your corpus,
+    # system should return a graceful no-answer rather than hallucinate
+    ("out_of_domain", "What is the transformer architecture used in LLMs?"),
+
+    # Ambiguous — underspecified, tests behaviour under low retrieval confidence
+    ("ambiguous_query", "How do I grow it?"),
+]
+```
+
+The `case_name` (first element) is used as a label in logs and the final pass/fail summary.
+The hallucination risk warning fires automatically when the LLM gives a long answer despite
+very low retrieval scores — a useful signal for out-of-domain queries.
 
 ---
 
@@ -274,14 +301,22 @@ source chabo_env/bin/activate
 
 ### Define your test questions
 
-Edit `tests/eval/test_questions.py` to add your questions:
+Edit `tests/eval/test_questions.py` to add your evaluation questions.
+
+These should be realistic queries representative of what actual users ask — curated with
+knowledge of your corpus. The examples below assume an **agriculture knowledge base**;
+replace them with questions relevant to your own domain:
 
 ```python
 questions = [
-    "Your question here",
-    "Another question",
+    "What irrigation method is recommended for sugarcane on new land?",
+    "How do I treat fungal disease in strawberry crops?",
 ]
 ```
+
+> **Note:** `test_questions.py` is for automated scoring via LLM-as-judge (`eval.py`).
+> For manual qualitative spot-checks with categorised scenarios, use
+> `tests/health/test_rag_pipeline.py` instead — the two complement each other.
 
 ### Run evaluation
 
