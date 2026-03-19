@@ -21,7 +21,7 @@ A RAG (Retrieval-Augmented Generation) orchestrator API built with FastAPI, Lang
 
 **Pipeline:** Query → Embed → Vector Search → Rerank → Generate (with citations)
 
-**Supported LLM Providers:** HuggingFace, OpenAI, Anthropic, Cohere
+**Supported LLM Providers:** HuggingFace, OpenAI, Anthropic, Cohere, Azure OpenAI
 
 ## Deployment
 
@@ -69,6 +69,7 @@ Pass API keys as environment variables at runtime:
 | `OPENAI_API_KEY` | If using OpenAI | OpenAI API key |
 | `ANTHROPIC_API_KEY` | If using Anthropic | Anthropic API key |
 | `COHERE_API_KEY` | If using Cohere | Cohere API key |
+| `AZURE_API_KEY` | If using Azure OpenAI | Azure OpenAI API key |
 
 #### Build and Run
 
@@ -201,6 +202,142 @@ Not needed behind HTTPS (e.g. HuggingFace Spaces, or behind a reverse proxy with
 | `/chatfed-ui-stream` | POST | Text query streaming (LangServe) |
 | `/chatfed-with-file-stream` | POST | File upload + query streaming (LangServe) |
 
+
+## Health Checks & Testing
+
+The `tests/health/` directory contains scripts to verify your setup before or after deployment. These run **locally outside Docker**, against already-running services, using the project's virtual environment.
+
+### Prerequisites
+
+Before running any health checks ensure:
+1. Services are up — Qdrant, embedding endpoint, reranker endpoint
+2. `params.cfg` is configured with correct endpoint URLs and collection name
+3. Required env vars are exported (`HF_TOKEN`, `QDRANT_API_KEY`, etc.)
+
+### Setup
+
+```bash
+# Navigate to repo root — required for src/ imports to resolve
+cd /path/to/chabo
+
+```
+
+### Running the full health suite
+
+```bash
+python tests/health/run_all.py
+```
+
+`run_all.py` checks each component in order and prints a pass/fail summary:
+
+| Step | Check | What it verifies |
+|------|-------|-----------------|
+| 1 | Qdrant | Reachable and configured collection exists |
+| 1 | Embedding endpoint | Returns a valid vector |
+| 1 | Reranker endpoint | Returns scores |
+| 2 | Retriever unit | Full retrieval + reranking returns ranked documents |
+| 2 | RAG pipeline | End-to-end retrieval → streaming generation with a sample query |
+
+Step 2 (component checks) only runs if all Step 1 connectivity checks pass. Logs are written to `tests/health/logs/` with a timestamp for each run.
+
+### Running individual scripts
+
+```bash
+# Retriever + pipeline tests only (skips connectivity pre-checks)
+python tests/health/test_rag_pipeline.py
+```
+
+`test_rag_pipeline.py` is for manual, qualitative spot-checks during development — inspect
+logs to verify retrieval scores and response quality for specific scenarios.
+
+Edit the `test_cases` list to add your own scenarios. The examples below use an
+**agriculture knowledge base** as a reference — imagine a RAG system built on crop guides,
+irrigation manuals, and farming practices. The scenarios themselves apply to any domain:
+swap in questions relevant to your own corpus.
+
+```python
+test_cases = [
+    # In-domain factual — system should retrieve and answer well
+    ("factual_question", "What fertilizer is recommended for wheat in sandy soil?"),
+
+    # In-domain summary — requires synthesising multiple docs
+    ("summary_question", "What are the irrigation methods used for sugarcane?"),
+
+    # Out-of-domain / hallucination risk — completely outside your corpus,
+    # system should return a graceful no-answer rather than hallucinate
+    ("out_of_domain", "What is the transformer architecture used in LLMs?"),
+
+    # Ambiguous — underspecified, tests behaviour under low retrieval confidence
+    ("ambiguous_query", "How do I grow it?"),
+]
+```
+
+The `case_name` (first element) is used as a label in logs and the final pass/fail summary.
+The hallucination risk warning fires automatically when the LLM gives a long answer despite
+very low retrieval scores — a useful signal for out-of-domain queries.
+
+---
+
+## RAG Evaluation
+
+The `tests/eval/` directory contains scripts to evaluate retrieval and reranking quality using an LLM-as-judge approach. Like health checks, these run locally outside Docker with the venv active from the repo root.
+
+### How it works
+
+Evaluation runs in two stages:
+
+**Stage 1 — Retrieval** (`run_retrieval_only`)
+Runs each question through the full retriever pipeline, capturing both raw vector search candidates and final reranked results. Output saved to `tests/eval/results/retrieval_eval_results.json`.
+
+**Stage 2 — LLM Judging** (`run_evaluation_batch`)
+Loads the retrieval results and uses the configured LLM to judge each retrieved document for relevance. Saves a judged report to `tests/eval/results/judged_eval_report.json`. Supports **checkpointing** — if interrupted, it resumes from where it left off.
+
+### Setup
+
+```bash
+cd /path/to/chabo
+source chabo_env/bin/activate
+```
+
+### Define your test questions
+
+Edit `tests/eval/test_questions.py` to add your evaluation questions.
+
+These should be realistic queries representative of what actual users ask — curated with
+knowledge of your corpus. The examples below assume an **agriculture knowledge base**;
+replace them with questions relevant to your own domain:
+
+```python
+questions = [
+    "What irrigation method is recommended for sugarcane on new land?",
+    "How do I treat fungal disease in strawberry crops?",
+]
+```
+
+> **Note:** `test_questions.py` is for automated scoring via LLM-as-judge (`eval.py`).
+> For manual qualitative spot-checks with categorised scenarios, use
+> `tests/health/test_rag_pipeline.py` instead — the two complement each other.
+
+### Run evaluation
+
+Pass the `--mode` flag to select which stage to run:
+
+```bash
+# Step 1: Run retrieval and save results
+python tests/eval/eval.py --mode retrieval
+
+# Step 2: Judge retrieved results with LLM (resumes from checkpoint if interrupted)
+python tests/eval/eval.py --mode batch
+
+# Quick sample run (first 2 questions only, useful for testing)
+python tests/eval/eval.py --mode sample
+```
+
+`--mode retrieval` is the default if no flag is provided.
+
+Results are saved to `tests/eval/results/` (gitignored).
+
+---
 
 ## License
 
