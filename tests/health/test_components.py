@@ -1,7 +1,59 @@
 import logging
 import asyncio
+import os
 
 logger = logging.getLogger("RAG_Test_Suite")
+
+
+async def check_embedding(retriever):
+    """Verify the embedding endpoint returns a valid vector using the retriever's own config."""
+    try:
+        from components.utils import _acall_hf_endpoint
+        payload = {"inputs": "health check"}
+        result = await _acall_hf_endpoint(retriever.embedding_endpoint_url, retriever.hf_token, payload)
+        if not isinstance(result, list) or not result:
+            raise ValueError("Unexpected response shape from embedding endpoint")
+        logger.info(f"✅ Embedding endpoint: reachable, vector dim={len(result[0])}.")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Embedding endpoint check failed: {str(e)}", exc_info=True)
+        return False
+
+
+async def check_reranker(retriever):
+    """Verify the reranker endpoint returns scores using the retriever's own config."""
+    try:
+        from components.utils import _acall_hf_endpoint
+        payload = {"query": "health check", "texts": ["sample document"]}
+        result = await _acall_hf_endpoint(retriever.reranker_endpoint_url, retriever.hf_token, payload)
+        if not isinstance(result, list) or 'score' not in result[0]:
+            raise ValueError("Unexpected response shape from reranker endpoint")
+        logger.info(f"✅ Reranker endpoint: reachable, returned {len(result)} score(s).")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Reranker endpoint check failed: {str(e)}", exc_info=True)
+        return False
+
+
+async def check_qdrant(retriever):
+    """Verify Qdrant is reachable and the configured collection exists using the retriever's own client."""
+    try:
+        if retriever.qdrant_mode.lower() == 'native':
+            client = await retriever._aget_qdrant_client()
+            collections = [c.name for c in (await client.get_collections()).collections]
+            if retriever.qdrant_collection not in collections:
+                logger.error(f"❌ Qdrant: collection '{retriever.qdrant_collection}' not found. Available: {collections}")
+                return False
+            logger.info(f"✅ Qdrant: reachable, collection '{retriever.qdrant_collection}' exists.")
+        elif retriever.qdrant_mode.lower() == 'gradio':
+            # Triggering _aget_qdrant_client forces GradioClient init — success means space is reachable
+            await retriever._aget_qdrant_client()
+            logger.info(f"✅ Qdrant (Gradio): space reachable at {retriever.qdrant_url}.")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Qdrant check failed: {str(e)}", exc_info=True)
+        return False
+
 
 async def test_retriever_unit(query, retriever_instance):
     """
@@ -63,9 +115,9 @@ async def run_full_pipeline_test(query, retriever_instance, generator_instance):
                 if len(accumulated_response) % 100 < len(data):
                     logger.info(f"  ...Streaming: {len(accumulated_response)} chars")
 
-            elif event_type == "sources":
-                captured_sources = data.get("sources", [])
-                logger.info(f"📍 Sources Event: Received {len(captured_sources)} citations.")
+            elif event_type == "final_answer":
+                captured_sources = data.get("webSources", [])
+                logger.info(f"📍 Sources received: {len(captured_sources)} citations.")
 
         # 3. Validation & Reporting
         logger.info("✅ Full Pipeline Test Complete!")
@@ -74,6 +126,7 @@ async def run_full_pipeline_test(query, retriever_instance, generator_instance):
         return {
             "answer": accumulated_response,
             "sources": captured_sources,
+            "docs": docs,
             "success": True
         }
 

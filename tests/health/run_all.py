@@ -18,7 +18,10 @@ import sys
 # Add src/ to path so imports match how main.py resolves them
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
 
-from test_components import test_retriever_unit, run_full_pipeline_test
+from test_components import (
+    check_qdrant, check_embedding, check_reranker,
+    test_retriever_unit, run_full_pipeline_test
+)
 
 
 def setup_logging():
@@ -37,101 +40,34 @@ logger = logging.getLogger("HealthCheck")
 SAMPLE_QUERY = "What is the purpose of this system?"
 
 
-async def check_qdrant():
-    """Verify Qdrant is reachable and the configured collection exists."""
-    try:
-        from components.utils import getconfig
-        from qdrant_client import QdrantClient
-
-        url = getconfig("qdrant", "url")
-        port = getconfig("qdrant", "port")
-        collection = getconfig("qdrant", "collection")
-        api_key = os.getenv("QDRANT_API_KEY")
-
-        client = QdrantClient(url=f"{url}:{port}", api_key=api_key)
-        collections = [c.name for c in client.get_collections().collections]
-
-        if collection not in collections:
-            logger.error(f"❌ Qdrant: collection '{collection}' not found. Available: {collections}")
-            return False
-
-        logger.info(f"✅ Qdrant: reachable, collection '{collection}' exists.")
-        return True
-
-    except Exception as e:
-        logger.error(f"❌ Qdrant check failed: {str(e)}", exc_info=True)
-        return False
-
-
-async def check_embedding():
-    """Verify the embedding endpoint returns a valid vector."""
-    try:
-        import httpx
-        from components.utils import getconfig
-
-        url = getconfig("hf_endpoints", "embedding_endpoint_url")
-        token = os.getenv("HF_TOKEN")
-        headers = {"Authorization": f"Bearer {token}"}
-        payload = {"inputs": "health check"}
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-
-        logger.info(f"✅ Embedding endpoint: reachable, status {response.status_code}.")
-        return True
-
-    except Exception as e:
-        logger.error(f"❌ Embedding endpoint check failed: {str(e)}", exc_info=True)
-        return False
-
-
-async def check_reranker():
-    """Verify the reranker endpoint returns scores."""
-    try:
-        import httpx
-        from components.utils import getconfig
-
-        url = getconfig("hf_endpoints", "reranker_endpoint_url")
-        token = os.getenv("HF_TOKEN")
-        headers = {"Authorization": f"Bearer {token}"}
-        payload = {"query": "health check", "texts": ["sample document"]}
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-
-        logger.info(f"✅ Reranker endpoint: reachable, status {response.status_code}.")
-        return True
-
-    except Exception as e:
-        logger.error(f"❌ Reranker endpoint check failed: {str(e)}", exc_info=True)
-        return False
-
-
 async def main():
     setup_logging()
     logger.info("=" * 50)
     logger.info("ChaBo Health Check Suite")
     logger.info("=" * 50)
 
+    from components.retriever.retriever_orchestrator import create_retriever_from_config
+    from components.generator.generator_orchestrator import Generator
+
+    try:
+        retriever = create_retriever_from_config("params.cfg")
+    except Exception as e:
+        logger.error(f"❌ Failed to load retriever config: {e}")
+        return False
+
     results = {}
 
-    # --- Connectivity checks ---
+    # --- Connectivity checks (retriever instance carries all config/clients) ---
     logger.info("\n--- Step 1: Connectivity Checks ---")
-    results["Qdrant"] = await check_qdrant()
-    results["Embedding Endpoint"] = await check_embedding()
-    results["Reranker Endpoint"] = await check_reranker()
+    results["Qdrant"] = await check_qdrant(retriever)
+    results["Embedding Endpoint"] = await check_embedding(retriever)
+    results["Reranker Endpoint"] = await check_reranker(retriever)
 
     if not all(results.values()):
         logger.error("❌ One or more connectivity checks failed. Fix the above errors before proceeding.")
     else:
         # --- Component checks (only if connectivity passed) ---
         logger.info("\n--- Step 2: Component Checks ---")
-        from components.retriever.retriever_orchestrator import create_retriever_from_config
-        from components.generator.generator_orchestrator import Generator
-
-        retriever = create_retriever_from_config("params.cfg")
         generator = Generator()
 
         retriever_result = await test_retriever_unit(SAMPLE_QUERY, retriever)

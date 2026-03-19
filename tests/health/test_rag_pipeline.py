@@ -29,36 +29,28 @@ async def run_single_test(case_name, query, retriever, generator):
     logger.info(f"▶️ STARTING TEST: {case_name}")
     logger.info(f"Query: {query}")
 
-    try:
-        # 1. Retrieval + Score Analysis
-        docs = await retriever.ainvoke(query)
-        logger.info(f"✅ Retrieved {len(docs)} documents.")
+    result = await run_full_pipeline_test(query, retriever, generator)
 
-        for i, doc in enumerate(docs):
-            score = doc.metadata.get('rerank_score', 'N/A')
-            logger.info(f"  [{i}] Score: {score} | Snippet: {doc.page_content[:60]}...")
-
-        # 2. Generation with Streaming
-        accumulated_response = ""
-        async for event in generator.generate_streaming(query=query, context=docs, chatui_format=True):
-            if event.get("event") == "data":
-                accumulated_response += event.get("data", "")
-            elif event.get("event") == "sources":
-                logger.info(f"📍 Sources Found: {len(event.get('data', {}).get('sources', []))}")
-
-        logger.info(f"📝 Final Response (first 100 chars): {accumulated_response[:100]}...")
-
-        # Hallucination risk check — only meaningful when docs were returned
-        if docs:
-            avg_score = sum(d.metadata.get('rerank_score', 0) for d in docs) / len(docs)
-            if avg_score < 0.2 and len(accumulated_response) > 300:
-                logger.warning("⚠️ High Risk: LLM gave a long answer despite very low retrieval scores.")
-
-        return True
-
-    except Exception as e:
-        logger.error(f"❌ TEST FAILED: {case_name} | Error: {str(e)}", exc_info=True)
+    if not result["success"]:
+        logger.error(f"❌ TEST FAILED: {case_name} | Error: {result.get('error')}")
         return False
+
+    # Per-doc score analysis
+    docs = result["docs"]
+    logger.info(f"✅ Retrieved {len(docs)} documents.")
+    for i, doc in enumerate(docs):
+        score = doc.metadata.get('rerank_score', 'N/A')
+        logger.info(f"  [{i}] Score: {score} | Snippet: {doc.page_content[:60]}...")
+
+    logger.info(f"📝 Final Response (first 100 chars): {result['answer'][:100]}...")
+
+    # Hallucination risk check — only meaningful when docs were returned
+    if docs:
+        avg_score = sum(d.metadata.get('rerank_score', 0) for d in docs) / len(docs)
+        if avg_score < 0.2 and len(result['answer']) > 300:
+            logger.warning("⚠️ High Risk: LLM gave a long answer despite very low retrieval scores.")
+
+    return True
 
 
 async def main():
