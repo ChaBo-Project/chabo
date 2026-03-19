@@ -49,6 +49,12 @@ async def evaluate_questions(questions: List[str], retriever) -> List[Dict]:
 
 
 async def run_retrieval_only():
+    # Guard against placeholder questions
+    if not questions or all(len(q.split()) <= 1 for q in questions):
+        print("💥 test_questions.py still has placeholder content.")
+        print("   Edit tests/eval/test_questions.py and add real questions before running eval.")
+        sys.exit(1)
+
     print("🚀 Initializing Retriever...")
     try:
         retriever = create_retriever_from_config("params.cfg")
@@ -94,12 +100,7 @@ async def run_evaluation_batch(input_file=None):
     generator_instance = Generator()
     output_filename = os.path.join(RESULTS_DIR, "judged_eval_report.json")
 
-    # 1. Health Check
-    if not await generator_instance.validate_health():
-        print("❌ Model health check failed. Batch aborted.")
-        return
-
-    # 2. Load the source retrieval data
+    # 1. Load the source retrieval data
     with open(input_file, "r", encoding="utf-8") as f:
         source_data = json.load(f)
 
