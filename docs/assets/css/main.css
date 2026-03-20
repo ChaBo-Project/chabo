@@ -384,3 +384,22 @@ footer {
   .explainer-title { position: static; }
   footer { padding: 32px 24px; flex-direction: column; align-items: flex-start; }
 }
+
+/* ── COMPONENTS (What ChaBo is) ─────────────────────────── */
+.components { padding: 100px 0; background: var(--paper-warm); }
+.components-label { font-size: 0.7rem; font-weight: 500; letter-spacing: 0.15em; text-transform: uppercase; color: var(--ink-muted); margin-bottom: 16px; }
+.components-title { font-family: var(--serif); font-size: clamp(2rem, 3.5vw, 3rem); letter-spacing: -0.02em; line-height: 1.1; max-width: 620px; margin-bottom: 12px; }
+.components-subtitle { font-size: 1rem; color: var(--ink-soft); max-width: 580px; margin-bottom: 56px; line-height: 1.65; }
+.components-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+.component-card { background: var(--paper); border: 1px solid var(--rule); border-radius: 12px; padding: 36px 32px; transition: box-shadow 0.2s; }
+.component-card:hover { box-shadow: 0 4px 24px rgba(28,25,23,0.07); }
+.component-icon { font-size: 1.5rem; margin-bottom: 16px; display: block; }
+.component-status { display: inline-block; margin-bottom: 16px; font-size: 0.7rem; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 10px; border-radius: 4px; }
+.status-live { background: rgba(22,163,74,0.1); color: #15803d; }
+.status-coming { background: var(--accent-glow); color: var(--accent); }
+.component-title { font-family: var(--serif); font-size: 1.35rem; letter-spacing: -0.01em; margin-bottom: 12px; line-height: 1.2; }
+.component-desc { font-size: 0.9rem; color: var(--ink-soft); line-height: 1.65; }
+
+@media (max-width: 900px) {
+  .components-grid { grid-template-columns: 1fr; }
+}
