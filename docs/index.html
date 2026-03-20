@@ -44,31 +44,28 @@ layout: default
   </div>
 </section>
 
-<!-- ── EXPLAINER ── -->
-<section class="explainer" id="what">
+<!-- ── WHAT CHABO IS ── -->
+<section class="components" id="what">
   <div class="section-inner">
-    <div>
-      <div class="explainer-label reveal">{{ site.explainer.label }}</div>
-      <h2 class="explainer-title reveal">{{ site.explainer.title }}</h2>
-    </div>
-    <div class="explainer-body">
-      <p class="reveal">{{ site.explainer.body1 }}</p>
-      <div class="pipeline reveal">
-        <div class="pipe-step">Your documents</div>
-        <div class="pipe-arrow">→</div>
-        <div class="pipe-step highlight">ChaBo</div>
-        <div class="pipe-arrow">→</div>
-        <div class="pipe-step">Smart answers + citations</div>
+    <div class="components-label reveal">{{ site.components.label }}</div>
+    <h2 class="components-title reveal">{{ site.components.title }}</h2>
+    <p class="components-subtitle reveal">{{ site.components.subtitle }}</p>
+    <div class="components-grid">
+      {% for item in site.components.items %}
+      <div class="component-card reveal">
+        <div class="component-icon">{{ item.icon }}</div>
+        <div class="component-status {% if item.status contains 'Coming' %}status-coming{% else %}status-live{% endif %}">
+          {{ item.status }}
+        </div>
+        <div class="component-title">{{ item.title }}</div>
+        <p class="component-desc">{{ item.desc }}</p>
       </div>
-      <p class="reveal">{{ site.explainer.body2 }}</p>
-      <div class="explainer-note reveal">
-        <strong>Plain English:</strong> {{ site.explainer.plain_english }}
-      </div>
+      {% endfor %}
     </div>
   </div>
 </section>
 
-<!-- ── FEATURES ── -->
+<!-- ── WHY CHABO ── -->
 <section class="features" id="features">
   <div class="section-inner">
     <div class="features-label reveal">{{ site.features.label }}</div>
@@ -80,42 +77,6 @@ layout: default
         <div class="feature-name">{{ item.title }}</div>
         <p class="feature-desc">{{ item.desc }}</p>
         <span class="feature-jargon">{{ item.jargon }}</span>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-</section>
-
-<!-- ── USE CASES ── -->
-<section class="usecases" id="usecases">
-  <div class="section-inner">
-    <div class="usecases-label reveal">{{ site.usecases.label }}</div>
-    <h2 class="usecases-title reveal">{{ site.usecases.title }}</h2>
-    <div class="usecases-list reveal">
-      {% for item in site.usecases.items %}
-      <div class="usecase-item">
-        <div class="usecase-num">0{{ forloop.index }}</div>
-        <div class="usecase-content">
-          <div class="usecase-name">{{ item.title }}</div>
-          <p class="usecase-desc">{{ item.desc }}</p>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-</section>
-
-<!-- ── HOW IT WORKS ── -->
-<section class="how" id="how">
-  <div class="section-inner">
-    <div class="how-label reveal">{{ site.how.label }}</div>
-    <h2 class="how-title reveal">{{ site.how.title }}</h2>
-    <div class="how-steps reveal">
-      {% for step in site.how.steps %}
-      <div class="how-step">
-        <div class="step-num">0{{ forloop.index }}</div>
-        <div class="step-title">{{ step.title }}</div>
-        <p class="step-desc">{{ step.desc }}</p>
       </div>
       {% endfor %}
     </div>
