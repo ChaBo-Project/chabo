@@ -58,28 +58,68 @@ problem:
         that knowledge stays locked inside individual organization teams.
         
 
-# ── Explainer section ────────────────────────────────────────
-explainer:
-  label:   "What ChaBo is"
-  title:   "More than code — a full deployment methodology"
-  body1: >
-    ChaBo (short for Chatbot Orchestrator) is an open-source framework that
-    connects the best AI infrastructure components into a single, deployable
-    pipeline — so your team can go from document collection to working chatbot
-    without rebuilding the wheel.
-  body2: >
-    Under the hood, ChaBo wires together the components that power
-    enterprise-grade RAG (Retrieval-Augmented Generation): a vector database
-    that stores and searches your documents semantically, embedding models that
-    understand meaning (not just keywords), a reranker that filters for the
-    most relevant results, and your choice of large language model to generate
-    the final answer.
-  plain_english: >
-    Instead of the AI guessing from its training data, ChaBo makes it read
-    <em>your</em> documents first — then answer. Every response includes
-    citations so users know exactly where the answer came from.
+# ── What ChaBo is ─────────────────────────────────────────────
+components:
+  label:    "What ChaBo is"
+  title:    "More than code — a full deployment methodology"
+  subtitle: >
+    ChaBo has three parts. Most open-source RAG frameworks give you only the
+    first. The second and third are what make it usable for real deployments.
+  items:
+    - icon:   "⚙️"
+      title:  "Working code"
+      status: "Available now"
+      desc: >
+        A modular, open-source RAG pipeline with tested defaults. Handles
+        document ingestion, semantic search, reranking, and answer generation
+        with citations. Deployable on HuggingFace Spaces or self-hosted
+        infrastructure.
+    - icon:   "📋"
+      title:  "Decision Playbook"
+      status: "Coming soon"
+      desc: >
+        Governance guidance for the decisions every team faces: which model
+        to use, where data should live, how to handle responsible AI
+        requirements, and how to manage costs. So teams stop making these
+        calls in isolation.
+    - icon:   "🗂️"
+      title:  "Adaptation Patterns"
+      status: "Coming soon"
+      desc: >
+        Documented real deployments showing what worked, what didn't, and
+        what to reuse. Each pattern covers a specific context — language,
+        bandwidth, document type, governance constraints — so the next
+        deployment doesn't start from zero.
 
-
+# ── Why ChaBo ─────────────────────────────────────────────────
+features:
+  label: "Why ChaBo"
+  title: "Built for the constraints real deployments actually face"
+  items:
+    - icon:   "🔧"
+      title:  "Swap components without rewriting everything"
+      desc:   "Every component — embedding, retrieval, reranking, generation — is decoupled. As better models become available or requirements change, individual parts can be swapped without touching the rest. Nothing is hardwired — your architecture evolves as your needs do"
+      jargon: "Modular architecture"
+    - icon:   "🔒"
+      title:  "Documents stay where you put them"
+      desc:   "Your documents are stored in your own vector database — on HuggingFace Spaces, your organisation's infrastructure, or a cloud provider you control. You chose where your data resides."
+      jargon: "Data sovereignty"
+    - icon:   "☁️"
+      title:  "Reference deployment on HuggingFace Spaces"
+      desc:   "The tested reference deployment runs on HuggingFace Spaces. Docker Compose is available for local or on-premises deployment. Moving between environments does not require rewriting the application."
+      jargon: "Portable deployment"
+    - icon:   "⚡"
+      title:  "Lightweight and cost-efficient by design"
+      desc:   "ChaBo is built to work with efficient, open-weight models. Suitable for 100–1,000 document collections without expensive GPU infrastructure. Clear graduation path for larger-scale needs when the time comes."
+      jargon: "Cost-efficient inference"
+    - icon:   "🤝"
+      title:  "One methodology, many deployments"
+      desc:   "The same ChaBo framework can be adapted across contexts with different languages, document types, and governance requirements — without each team starting from zero."
+      jargon: "Reusable foundation"
+    - icon:   "🌍"
+      title:  "No licence costs — but honest about what's not free"
+      desc:   "The code is fully open source. Inference costs, hosting, and maintenance are real. The Decision Playbook will provide cost modelling guidance so teams can budget accurately from the start."
+      jargon: "Open source · Cost-transparent"
 
 # ── Tech stack strip ─────────────────────────────────────────
 stack:
@@ -93,10 +133,13 @@ stack:
 
 # ── CTA section ──────────────────────────────────────────────
 cta:
-  label:    "Get started"
-  title_start: "Ready to own your"
-  title_em: "AI infrastructure?"
-  subtitle: "Full deployment guides, API reference, and configuration docs in the README. Up and running in under an hour."
+  label:       "Get involved"
+  title_start: "Start with the code."
+  title_em:    "Contribute to the methodology."
+  subtitle: >
+    Explore the repository, read the onboarding documentation, or get in
+    touch if you have a deployment in mind. ChaBo is built through use —
+    the more projects deploy it, the stronger the shared foundation becomes.
 
 # ── Footer ───────────────────────────────────────────────────
 footer:
