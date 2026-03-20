@@ -5,7 +5,7 @@
 # ============================================================
 
 title: ChaBo
-description: Production-Ready RAG, Built to Be Owned
+description: RAG based chatbots framework, Built to Be Owned
 url: "https://chabo-project.github.io"
 baseurl: "/chabo"
 
@@ -15,119 +15,83 @@ readme_url:  "https://github.com/chabo-project/chabo/blob/main/README.md"
 
 # ── Hero section ─────────────────────────────────────────────
 hero:
-  eyebrow:   "Open source · Production ready · Enterprise-grade"
+  eyebrow:   "Open source · PoC-to-Production · Responsible AI"
   line1:     "Your knowledge base."
   line2:     "Your infrastructure."
   line3:     "Your chatbot."
   subtitle:  >
-    ChaBo is an open-source RAG framework that turns your organisation's
-    documents into a production-ready AI assistant — without handing
-    control of your data to anyone else.
+    ChaBo is an open-source RAG framework for implementation and deployment 
+    methodology that helps you deploy domain-specific AI chatbots — quickly, 
+    responsibly, and affordably without handing control of your data to anyone else.
   badges:
-    - "Cloud agnostic"
+    - "Open Source"
     - "No vendor lock-in"
     - "Data sovereign"
     - "Self-hostable"
+    - "Cost-efficient"
 
 # ── Problem section ──────────────────────────────────────────
 problem:
-  label: "The status quo"
-  title_start: "Most AI chatbot solutions make you"
-  title_em:    "choose"
-  title_end:   "between speed and control."
+  label: "The problem chabo solves"
+  title_start: "Every team is reinventing"
+  title_em:    "the same wheel"
+  title_end:   "without the shared foundation."
   points:
-    - heading: "Off-the-shelf SaaS"
+    - heading: "Off-the-shelf"
       text: >
         Fast to set up, but your documents live on someone else's servers.
         Limited customisation, mounting subscription costs, and a dependency
         you can't escape.
-    - heading: "Research-grade frameworks"
+    - heading: "Governance is handled inconsistently"
       text: >
-        Powerful and flexible, but they assume PhD-level ML expertise.
-        Not designed for production deployment or real organisational workflows.
+        Without shared guidance, every team makes different decisions
+        on data residency, model choice, and responsible use — often under
+        time pressure, without the documentation to justify those decisions later.
     - heading: "Build it yourself"
       text: >
         Maximum control, but months of engineering time spent on plumbing
         instead of the actual product — and you still have to maintain it all.
+    - heading: "Knowledge is not shared"
+      text: >
+        What works for an agricultural advisory chatbot in Uganda has direct
+        lessons for a regulatory compliance tool in Brussels — but
+        that knowledge stays locked inside individual organization teams.
+        
 
-# ── Explainer section ────────────────────────────────────────
-explainer:
-  label:   "What is ChaBo"
-  title:   "The bridge between research and production"
-  body1: >
-    ChaBo (short for Chatbot Orchestrator) is an open-source framework that
-    connects the best AI infrastructure components into a single, deployable
-    pipeline — so your team can go from document collection to working chatbot
-    without rebuilding the wheel.
-  body2: >
-    Under the hood, ChaBo wires together the components that power
-    enterprise-grade RAG (Retrieval-Augmented Generation): a vector database
-    that stores and searches your documents semantically, embedding models that
-    understand meaning (not just keywords), a reranker that filters for the
-    most relevant results, and your choice of large language model to generate
-    the final answer.
-  plain_english: >
-    Instead of the AI guessing from its training data, ChaBo makes it read
-    <em>your</em> documents first — then answer. Every response includes
-    citations so users know exactly where the answer came from.
-
-# ── Features section ─────────────────────────────────────────
-features:
-  label: "Why ChaBo"
-  title: "Built for organisations that need control without complexity"
+# ── What is ChaBo (three components) ────────────────────────
+components:
+  label:    "What ChaBo is"
+  title:    "More than code — a full deployment methodology"
+  subtitle: >
+    ChaBo has three parts. Most open-source RAG frameworks give you only the
+    first. The second and third are what make it usable for development
+    cooperation projects.
   items:
-    - icon:   "🔧"
-      title:  "Swap anything, break nothing"
-      desc:   "Every component is fully decoupled. Want a better AI model? Switch it. Want a different database? Plug it in. Nothing is hardwired — your architecture evolves as your needs do."
-      jargon: "Microservices architecture"
-    - icon:   "🔒"
-      title:  "Your data never leaves your infrastructure"
-      desc:   "Documents stay in your own vector database — on-premise, in your private cloud, or on a provider you choose. The only external call is to the AI model, and even that can be self-hosted."
-      jargon: "Data sovereignty · Air-gappable"
-    - icon:   "☁️"
-      title:  "Deploy anywhere"
-      desc:   "Run on AWS, Azure, Google Cloud, HuggingFace Spaces, or your own servers. No proprietary cloud dependencies. Move between providers without rewriting a line of code."
-      jargon: "Cloud agnostic · Portable"
-    - icon:   "⚡"
-      title:  "Enterprise performance, lean infrastructure"
-      desc:   "ChaBo is optimised for efficient, lightweight models. You get production-grade quality without needing a GPU cluster — keeping infrastructure costs predictable and low."
-      jargon: "Cost-efficient inference"
-    - icon:   "🏢"
-      title:  "One framework, many chatbots"
-      desc:   "Deploy separate chatbots for HR, Legal, Product, or Customer Support — all running on the same ChaBo infrastructure with different knowledge bases and configurations."
-      jargon: "Multi-tenant · Horizontally scalable"
-    - icon:   "🌍"
-      title:  "No licence fees. Ever."
-      desc:   "ChaBo is fully open source, built on open-source components end to end. No vendor negotiation, no per-seat pricing, no surprise billing. Your team owns it completely."
-      jargon: "Apache 2.0 · Open source"
+    - icon:   "⚙️"
+      title:  "Working code"
+      status: "Available now"
+      desc: >
+        A modular, open-source RAG pipeline with tested defaults. Handles
+        document ingestion, semantic search, reranking, and answer generation
+        with citations. Deployable on HuggingFace Spaces or self-hosted
+        infrastructure.
+    - icon:   "📋"
+      title:  "Decision Playbook"
+      status: "Coming — soon"
+      desc: >
+        Governance guidance for the decisions every project faces: which model
+        to use, where data should live, how to handle responsible AI
+        requirements, and how to manage costs. So teams stop making these
+        calls in isolation.
+    - icon:   "🗂️"
+      title:  "Adaptation Patterns"
+      status: "Coming — soon"
+      desc: >
+        Documented real deployments showing what worked, what didn't, and
+        what to reuse. Each pattern covers a specific context — language,
+        bandwidth, document type, governance constraints — so the next
+        project doesn't start from zero.
 
-# ── Use cases section ────────────────────────────────────────
-usecases:
-  label: "Who it's for"
-  title: "Real deployment scenarios"
-  items:
-    - title: "Internal knowledge management"
-      desc:  "Turn policy documents, SOPs, and internal wikis into a searchable assistant that employees can query in plain language — without burdening HR or Ops teams with repetitive questions."
-    - title: "Customer-facing support"
-      desc:  "Deploy a chatbot trained on your product documentation, FAQs, and support articles. Answers are grounded in your content, with citations — so customers trust the responses."
-    - title: "Regulated industry deployments"
-      desc:  "Healthcare, legal, finance — sectors where data residency and auditability are non-negotiable. ChaBo's self-hosted model means your data never crosses a compliance boundary."
-    - title: "Research & intelligence teams"
-      desc:  "Ingest reports, papers, and proprietary research into a queryable knowledge base. Get synthesised answers with source references — not generic AI hallucinations."
-
-# ── How it works section ─────────────────────────────────────
-how:
-  label: "How it works"
-  title: "From your documents to an answer, in four steps"
-  steps:
-    - title: "Ingest your documents"
-      desc:  "Upload PDFs, Word docs, or structured data. ChaBo splits them into chunks and stores them in your private vector database — ready to be searched by meaning, not just keywords."
-    - title: "A user asks a question"
-      desc:  "The question is converted into a semantic representation and matched against your document library — surfacing the most relevant passages across your entire knowledge base, instantly."
-    - title: "Results are ranked and filtered"
-      desc:  "A dedicated reranking step scores and filters retrieved passages for relevance — so only the most useful context reaches the AI model. This is what separates production RAG from toy demos."
-    - title: "The AI answers with citations"
-      desc:  "Your chosen language model generates a clear, grounded answer using only the retrieved context. Every claim is traceable to a source document — no hallucinations, no guesswork."
 
 # ── Tech stack strip ─────────────────────────────────────────
 stack:
@@ -138,7 +102,6 @@ stack:
     - "Qdrant"
     - "HuggingFace TEI"
     - "Docker"
-    - "OpenAI · Anthropic · Cohere · Azure"
 
 # ── CTA section ──────────────────────────────────────────────
 cta:
