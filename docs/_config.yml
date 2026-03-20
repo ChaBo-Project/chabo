@@ -58,39 +58,27 @@ problem:
         that knowledge stays locked inside individual organization teams.
         
 
-# ── What is ChaBo (three components) ────────────────────────
-components:
-  label:    "What ChaBo is"
-  title:    "More than code — a full deployment methodology"
-  subtitle: >
-    ChaBo has three parts. Most open-source RAG frameworks give you only the
-    first. The second and third are what make it usable for development
-    cooperation projects.
-  items:
-    - icon:   "⚙️"
-      title:  "Working code"
-      status: "Available now"
-      desc: >
-        A modular, open-source RAG pipeline with tested defaults. Handles
-        document ingestion, semantic search, reranking, and answer generation
-        with citations. Deployable on HuggingFace Spaces or self-hosted
-        infrastructure.
-    - icon:   "📋"
-      title:  "Decision Playbook"
-      status: "Coming — soon"
-      desc: >
-        Governance guidance for the decisions every project faces: which model
-        to use, where data should live, how to handle responsible AI
-        requirements, and how to manage costs. So teams stop making these
-        calls in isolation.
-    - icon:   "🗂️"
-      title:  "Adaptation Patterns"
-      status: "Coming — soon"
-      desc: >
-        Documented real deployments showing what worked, what didn't, and
-        what to reuse. Each pattern covers a specific context — language,
-        bandwidth, document type, governance constraints — so the next
-        project doesn't start from zero.
+# ── Explainer section ────────────────────────────────────────
+explainer:
+  label:   "What ChaBo is"
+  title:   "More than code — a full deployment methodology"
+  body1: >
+    ChaBo (short for Chatbot Orchestrator) is an open-source framework that
+    connects the best AI infrastructure components into a single, deployable
+    pipeline — so your team can go from document collection to working chatbot
+    without rebuilding the wheel.
+  body2: >
+    Under the hood, ChaBo wires together the components that power
+    enterprise-grade RAG (Retrieval-Augmented Generation): a vector database
+    that stores and searches your documents semantically, embedding models that
+    understand meaning (not just keywords), a reranker that filters for the
+    most relevant results, and your choice of large language model to generate
+    the final answer.
+  plain_english: >
+    Instead of the AI guessing from its training data, ChaBo makes it read
+    <em>your</em> documents first — then answer. Every response includes
+    citations so users know exactly where the answer came from.
+
 
 
 # ── Tech stack strip ─────────────────────────────────────────
