@@ -7,8 +7,9 @@ import logging
 logger = logging.getLogger(__name__)
 from datetime import datetime
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Any, Optional
 from langchain_core.documents import Document
+from langchain_core.messages import SystemMessage, HumanMessage
 from .telemetry import extract_retriever_telemetry
 from components.ingestor.ingestor import process_document
 
@@ -191,6 +192,139 @@ async def ingest_node(state: 'GraphState') -> 'GraphState':
 
         return {"ingestor_context": "", "metadata": metadata}
 
+
+def _parse_filter_response(
+    raw_response: str,
+    filterable_fields: Dict[str, str]
+) -> Optional[Dict[str, Any]]:
+    """
+    Parse and validate an LLM filter extraction response.
+    Returns a validated {field: cast_value} dict, or None if parsing fails or result is empty.
+    """
+    try:
+        cleaned = raw_response.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        extracted = json.loads(cleaned)
+        if not isinstance(extracted, dict):
+            return None
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+    filters = {}
+    for key, value in extracted.items():
+        if key not in filterable_fields:
+            continue
+        declared_type = filterable_fields[key]
+        try:
+            if declared_type == "list":
+                filters[key] = [str(v) for v in value] if isinstance(value, list) else [str(value)]
+            elif declared_type == "int":
+                filters[key] = int(value)
+            else:
+                filters[key] = str(value)
+        except (TypeError, ValueError):
+            pass  # drop uncastable values silently
+
+    return filters if filters else None
+
+
+async def extract_filters_node(
+    state: "GraphState",
+    generator: "Generator",
+    filterable_fields: Dict[str, str],
+    filter_values: Dict[str, list],
+) -> "GraphState":
+    """
+    Node to extract metadata filters from query + user conversation history before retrieval.
+    No-op if filterable_fields is empty. Fails gracefully — retrieval proceeds unfiltered on any error.
+
+    Two-pass strategy:
+    - Pass 1: LLM extracts from current query only (precise, no history noise)
+    - Pass 2: if pass 1 yields nothing, LLM scans user_messages_history (user turns only,
+              no assistant responses or retrieved document content) for filters established
+              in prior turns and carries them forward
+    """
+    if not filterable_fields:
+        logger.info("extract_filters_node: no filterable_fields configured, skipping")
+        return {}  # No state update — metadata_filters stays None
+
+    query = state.get("query", "")
+    user_messages_history = state.get("user_messages_history")
+
+    # Build field descriptions for the prompts, including valid values where available
+    field_descriptions = []
+    for field, ftype in filterable_fields.items():
+        valid_vals = filter_values.get(field)
+        if ftype == "list":
+            base = f'"{field}" (list of strings, use JSON array)'
+        else:
+            base = f'"{field}" ({ftype})'
+        if valid_vals:
+            base += (
+                f" — valid values: {valid_vals}. "
+                "Pick the closest match from this list even if the user's wording differs slightly "
+                "(e.g. a plural, typo, or synonym). Do NOT use a value outside this list."
+            )
+        field_descriptions.append(base)
+    fields_desc = "\n".join(f"  - {d}" for d in field_descriptions)
+
+    base_system = (
+        "You are a metadata filter extraction assistant.\n"
+        f"Available filterable fields:\n{fields_desc}\n\n"
+        "Rules:\n"
+        "- Only extract filters EXPLICITLY stated by the user. Do NOT infer or assume values.\n"
+        "- For fields with a valid values list, always pick the closest match from that list.\n"
+        "- For list-type fields, output a JSON array of strings.\n"
+        "- For str/int fields, output a single value.\n"
+        "- Return ONLY a valid JSON object, no markdown fences, no explanation.\n"
+        "- If no filters are explicitly stated, return: {}\n"
+        f"- Only use keys from: {list(filterable_fields.keys())}"
+    )
+
+    # --- Pass 1: current query only ---
+    try:
+        messages_p1 = [
+            SystemMessage(content=base_system),
+            HumanMessage(content=f"### CURRENT QUERY\n{query}\n\nExtract metadata filters as a JSON object."),
+        ]
+        raw_p1 = await generator._call_llm(messages_p1)
+        filters = _parse_filter_response(raw_p1, filterable_fields)
+    except Exception as e:
+        logger.warning(f"extract_filters_node: pass 1 LLM call failed ({e}). Proceeding without filters.")
+        return {"metadata_filters": None}
+
+    if filters:
+        logger.info(f"extract_filters_node: pass 1 extracted filters: {filters}")
+        return {"metadata_filters": filters}
+
+    # --- Pass 2: user history fallback ---
+    if not user_messages_history:
+        logger.info("extract_filters_node: no filters in current query and no user history, skipping")
+        return {"metadata_filters": None}
+
+    logger.info("extract_filters_node: pass 1 yielded nothing, checking user history")
+    try:
+        messages_p2 = [
+            SystemMessage(content=base_system),
+            HumanMessage(content=(
+                f"### PREVIOUS USER MESSAGES\n{user_messages_history}\n\n"
+                f"### CURRENT QUERY\n{query}\n\n"
+                "The current query may be a follow-up. Extract any metadata filters that were "
+                "established in the previous messages and still apply. "
+                "Return {} if no filters were previously established."
+            )),
+        ]
+        raw_p2 = await generator._call_llm(messages_p2)
+        filters = _parse_filter_response(raw_p2, filterable_fields)
+    except Exception as e:
+        logger.warning(f"extract_filters_node: pass 2 LLM call failed ({e}). Proceeding without filters.")
+        return {"metadata_filters": None}
+
+    if filters:
+        logger.info(f"extract_filters_node: pass 2 carried forward filters: {filters}")
+    else:
+        logger.info("extract_filters_node: no filters established in user history")
+
+    return {"metadata_filters": filters}
 
 
 # from .state import GraphState

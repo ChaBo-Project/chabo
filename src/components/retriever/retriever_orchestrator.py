@@ -4,7 +4,7 @@ import logging
 import asyncio
 logger = logging.getLogger(__name__)
 
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Union, Optional
 from pydantic import Field
 from qdrant_client import QdrantClient, AsyncQdrantClient
 from gradio_client import Client as GradioClient
@@ -12,6 +12,32 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from ..utils import getconfig, get_config_value, _call_hf_endpoint, _acall_hf_endpoint
 from qdrant_client.http import models as rest
+
+
+def _build_qdrant_filter(filters: Dict[str, Any]) -> Optional[rest.Filter]:
+    """
+    Convert a plain {field: value} dict into a Qdrant rest.Filter.
+    Payload fields are nested under 'metadata', so keys become 'metadata.<field>'.
+    - list value   → MatchAny  (match any element in list)
+    - scalar value → MatchValue (exact match)
+    All conditions ANDed via must[]. Returns None if filters is empty or None.
+    """
+    if not filters:
+        return None
+
+    must_conditions = []
+    for field, value in filters.items():
+        qdrant_key = f"metadata.{field}"
+        if isinstance(value, list):
+            must_conditions.append(
+                rest.FieldCondition(key=qdrant_key, match=rest.MatchAny(any=value))
+            )
+        else:
+            must_conditions.append(
+                rest.FieldCondition(key=qdrant_key, match=rest.MatchValue(value=value))
+            )
+
+    return rest.Filter(must=must_conditions)
 
 
 # --- THE MAIN RETRIEVER ORCHESTRATOR CLASS  ---
@@ -114,7 +140,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 search_result = client.query_points(
                     collection_name=self.qdrant_collection,
                     query=query_vector,
-                    query_filter=filters,
+                    query_filter=_build_qdrant_filter(filters),
                     limit=self.initial_k,
                     with_payload=True,
                     with_vectors=False
@@ -157,7 +183,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 search_result = await client.query_points(
                     collection_name=self.qdrant_collection,
                     query=query_vector,
-                    query_filter=filters,
+                    query_filter=_build_qdrant_filter(filters),
                     limit=self.initial_k,
                     with_payload=True,
                     with_vectors=False

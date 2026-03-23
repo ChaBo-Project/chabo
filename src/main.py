@@ -15,10 +15,33 @@ from components.orchestration.workflow import build_workflow
 from components.orchestration.ui_adapters import chatui_adapter, chatui_file_adapter
 from components.orchestration.state import ChatUIInput, ChatUIFileInput
 from components.utils import getconfig
+from components.retriever.filters import FILTER_VALUES
+from typing import Dict
 
 config = getconfig("params.cfg")
 MAX_TURNS = config.getint("conversation_history", "MAX_TURNS", fallback=3)
 MAX_CHARS = config.getint("conversation_history", "MAX_CHARS", fallback=8000)
+
+# Parse filterable_fields: "field:type,field:type" → {"field": "type"}
+_filterable_fields_raw = config.get("metadata_filters", "filterable_fields", fallback="")
+FILTERABLE_FIELDS: Dict[str, str] = {}
+for _item in _filterable_fields_raw.split(","):
+    _item = _item.strip()
+    if ":" in _item:
+        _name, _ftype = _item.split(":", 1)
+        FILTERABLE_FIELDS[_name.strip()] = _ftype.strip()
+    elif _item:
+        FILTERABLE_FIELDS[_item] = "str"  # default to str if no type declared
+
+# Validate: every field declared in params.cfg must have valid values in filters.py
+if FILTERABLE_FIELDS:
+    _missing = [f for f in FILTERABLE_FIELDS if f not in FILTER_VALUES]
+    if _missing:
+        raise ValueError(
+            f"Fields declared in params.cfg [metadata_filters] are missing from filters.py: {_missing}. "
+            "Add valid values for these fields in src/components/retriever/filters.py "
+            "or remove them from filterable_fields in params.cfg."
+        )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -29,7 +52,7 @@ retriever_instance = create_retriever_from_config(config_file="params.cfg")
 generator_instance = Generator()
 
 # Build the LangGraph workflow
-compiled_graph = build_workflow(retriever_instance, generator_instance)
+compiled_graph = build_workflow(retriever_instance, generator_instance, filterable_fields=FILTERABLE_FIELDS, filter_values=FILTER_VALUES)
 
 
 #----------------------------------------

@@ -22,6 +22,7 @@ class GraphState(TypedDict, total=False):
     file_type: Optional[str]
     workflow_type: Optional[str]  # 'standard' or 'geojson_direct'
     metadata_filters: Optional[Dict[str, Any]]
+    user_messages_history: Optional[str]  # User-turn-only history for filter extraction (no assistant responses)
 
 class Message(BaseModel):
     """Single message in conversation history"""
