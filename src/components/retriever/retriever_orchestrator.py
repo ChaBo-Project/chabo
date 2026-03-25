@@ -1,4 +1,5 @@
 import os
+import json
 import configparser
 import logging
 import asyncio
@@ -158,13 +159,17 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
 
             elif self.qdrant_mode.lower() == 'gradio':
                 logger.debug(f"Sync Gradio Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
-                return client.predict(
-                    query_vector_json=query_vector, 
+                result = client.predict(
+                    query_vector_json=json.dumps(query_vector),
                     collection_name=self.qdrant_collection,
                     top_k=self.initial_k,
-                    #query_filter=filters,
-                    api_name="/query_points" 
+                    query_filter=json.dumps(filters) if filters else None,
+                    api_name="/query_points"
                 )
+                if isinstance(result, dict) and "error" in result:
+                    logger.error(f"Gradio wrapper error: {result.get('message', result)}")
+                    return []
+                return result
         
         except Exception as e:
             logger.error(f"Search failed at {self.qdrant_url}. Error: {e}")
@@ -198,17 +203,22 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
             elif self.qdrant_mode.lower() == 'gradio':
                 logger.debug(f"Async Gradio Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
                 loop = asyncio.get_running_loop()
-            
+
                 # Use run_in_executor to make the synchronous .predict() awaitable
-                return await loop.run_in_executor(
-                    None, 
+                result = await loop.run_in_executor(
+                    None,
                     lambda: client.predict(
-                        query_vector_json=query_vector, 
+                        query_vector_json=json.dumps(query_vector),
                         collection_name=self.qdrant_collection,
                         top_k=self.initial_k,
-                        api_name="/query_points" 
+                        query_filter=json.dumps(filters) if filters else None,
+                        api_name="/query_points"
                     )
                 )
+                if isinstance(result, dict) and "error" in result:
+                    logger.error(f"Gradio wrapper error: {result.get('message', result)}")
+                    return []
+                return result
         except Exception as e:
             logger.error(f"Search failed at {self.qdrant_url}. Error: {e}")
             return []
