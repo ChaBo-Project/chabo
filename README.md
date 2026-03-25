@@ -5,21 +5,23 @@ A RAG (Retrieval-Augmented Generation) orchestrator API built with FastAPI, Lang
 ## Architecture
 
 ```
-┌─────────────┐     ┌─────────────────────────────────────────────────┐
-│   ChatUI    │────▶│                    ChaBo                        │
-│  (Frontend) │     │  ┌─────────┐   ┌─────────┐   ┌───────────────┐  │
-└─────────────┘     │  │ Embed   │──▶│ Search  │──▶│   Rerank      │  │
-                    │  │ (HF)    │   │ (Qdrant)│   │   (HF)        │  │
-                    │  └─────────┘   └─────────┘   └───────┬───────┘  │
-                    │                                      │          │
-                    │                              ┌───────▼───────┐  │
-                    │                              │   Generate    │  │
-                    │                              │ (Multi-LLM)   │  │
-                    │                              └───────────────┘  │
-                    └─────────────────────────────────────────────────┘
+┌─────────────┐     ┌────────────────────────────────────────────────────────┐
+│   ChatUI    │────▶│                        ChaBo                           │
+│  (Frontend) │     │  ┌─────────┐   ┌──────────────┐   ┌───────────────┐   │
+└─────────────┘     │  │ Embed   │──▶│ Smart Search │──▶│    Rerank     │   │
+                    │  │ (HF)    │   │   (Qdrant)   │   │    (HF)       │   │
+                    │  └─────────┘   └──────▲───────┘   └───────┬───────┘   │
+                    │                       │                   │           │
+                    │               ┌───────┴──────┐   ┌───────▼────────┐   │
+                    │               │   Extract    │   │    Generate    │   │
+                    │               │  Filters*    │   │  (Multi-LLM)  │   │
+                    │               └──────────────┘   └────────────────┘   │
+                    └────────────────────────────────────────────────────────┘
 ```
 
-**Pipeline:** Query → Embed → Vector Search → Rerank → Generate (with citations)
+**Pipeline:** Query → Embed → Extract Filters* → Smart Search → Rerank → Generate (with citations)
+
+> **Smart Search** applies LLM-extracted metadata filters to narrow Qdrant results before reranking. Filters are pulled from the current query, with conversation history as fallback. `*` Activated only when `filterable_fields` is configured under `[metadata_filters]` in `params.cfg` — omit or leave empty for standard unfiltered search.
 
 **Supported LLM Providers:** HuggingFace, OpenAI, Anthropic, Cohere, Azure OpenAI
 
@@ -58,6 +60,9 @@ INFERENCE_PROVIDER = ABC
 ORGANIZATION = XYZ
 CONTEXT_META_FIELDS = filename,project_id,document_source
 TITLE_META_FIELDS = filename,page
+
+[metadata_filters]
+filterable_fields = project_id:str,year:int,tags:list
 ```
 
 Pass API keys as environment variables at runtime:
