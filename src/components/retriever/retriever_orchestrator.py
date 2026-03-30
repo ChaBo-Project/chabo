@@ -41,6 +41,15 @@ def _build_qdrant_filter(filters: Dict[str, Any]) -> Optional[rest.Filter]:
     return rest.Filter(must=must_conditions)
 
 
+def _format_hit(hit) -> Dict[str, Any]:
+    """Format a Qdrant ScoredPoint into the standard retriever result dict."""
+    return {
+        "answer": hit.payload.get("text", hit.payload.get("page_content", "")),
+        "answer_metadata": hit.payload.get("metadata", {}),
+        "score": hit.score
+    }
+
+
 # --- THE MAIN RETRIEVER ORCHESTRATOR CLASS  ---
 class ChaBoHFEndpointRetriever(BaseRetriever):
     """
@@ -146,16 +155,25 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                     with_payload=True,
                     with_vectors=False
                 )
-                # In the native mode qdrant_client can consume the string output from and 
-                # reformualte the Scoredpoints format, but gradio cannot handle so therefore
-                # in Gradio version the wrapper reformats the outout in desired format and sits in 
-                # gradio space itself.
-                
-                return [{
-                "answer": hit.payload.get("text", hit.payload.get("page_content", "")), 
-                "answer_metadata": hit.payload.get("metadata", {}),
-                "score": hit.score
-                } for hit in search_result.points]
+
+                # Safeguard: if AND filter returns 0 results and multiple fields were applied,
+                # retry with the priority field only (first key in filters dict).
+                if not search_result.points and filters and len(filters) > 1:
+                    priority_field = next(iter(filters))
+                    priority_filter = {priority_field: filters[priority_field]}
+                    logger.info(
+                        f"AND filter returned 0 results, retrying with priority field only: {priority_filter}"
+                    )
+                    search_result = client.query_points(
+                        collection_name=self.qdrant_collection,
+                        query=query_vector,
+                        query_filter=_build_qdrant_filter(priority_filter),
+                        limit=self.initial_k,
+                        with_payload=True,
+                        with_vectors=False
+                    )
+
+                return [_format_hit(hit) for hit in search_result.points]
 
             elif self.qdrant_mode.lower() == 'gradio':
                 logger.debug(f"Sync Gradio Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
@@ -169,6 +187,26 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 if isinstance(result, dict) and "error" in result:
                     logger.error(f"Gradio wrapper error: {result.get('message', result)}")
                     return []
+
+                # Safeguard: if AND filter returns 0 results and multiple fields were applied,
+                # retry with the priority field only (first key in filters dict).
+                if not result and filters and len(filters) > 1:
+                    priority_field = next(iter(filters))
+                    priority_filter = {priority_field: filters[priority_field]}
+                    logger.info(
+                        f"AND filter returned 0 results (Gradio), retrying with priority field only: {priority_filter}"
+                    )
+                    result = client.predict(
+                        query_vector_json=json.dumps(query_vector),
+                        collection_name=self.qdrant_collection,
+                        top_k=self.initial_k,
+                        query_filter=json.dumps(priority_filter),
+                        api_name="/query_points"
+                    )
+                    if isinstance(result, dict) and "error" in result:
+                        logger.error(f"Gradio wrapper error on priority retry: {result.get('message', result)}")
+                        return []
+
                 return result
         
         except Exception as e:
@@ -193,12 +231,25 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                     with_payload=True,
                     with_vectors=False
                 )
-                
-                return [{
-                "answer": hit.payload.get("text", hit.payload.get("page_content", "")), 
-                "answer_metadata": hit.payload.get("metadata", {}),
-                "score": hit.score
-                } for hit in search_result.points]
+
+                # Safeguard: if AND filter returns 0 results and multiple fields were applied,
+                # retry with the priority field only (first key in filters dict).
+                if not search_result.points and filters and len(filters) > 1:
+                    priority_field = next(iter(filters))
+                    priority_filter = {priority_field: filters[priority_field]}
+                    logger.info(
+                        f"AND filter returned 0 results, retrying with priority field only: {priority_filter}"
+                    )
+                    search_result = await client.query_points(
+                        collection_name=self.qdrant_collection,
+                        query=query_vector,
+                        query_filter=_build_qdrant_filter(priority_filter),
+                        limit=self.initial_k,
+                        with_payload=True,
+                        with_vectors=False
+                    )
+
+                return [_format_hit(hit) for hit in search_result.points]
 
             elif self.qdrant_mode.lower() == 'gradio':
                 logger.debug(f"Async Gradio Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
@@ -218,6 +269,29 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 if isinstance(result, dict) and "error" in result:
                     logger.error(f"Gradio wrapper error: {result.get('message', result)}")
                     return []
+
+                # Safeguard: if AND filter returns 0 results and multiple fields were applied,
+                # retry with the priority field only (first key in filters dict).
+                if not result and filters and len(filters) > 1:
+                    priority_field = next(iter(filters))
+                    priority_filter = {priority_field: filters[priority_field]}
+                    logger.info(
+                        f"AND filter returned 0 results (Gradio), retrying with priority field only: {priority_filter}"
+                    )
+                    result = await loop.run_in_executor(
+                        None,
+                        lambda: client.predict(
+                            query_vector_json=json.dumps(query_vector),
+                            collection_name=self.qdrant_collection,
+                            top_k=self.initial_k,
+                            query_filter=json.dumps(priority_filter),
+                            api_name="/query_points"
+                        )
+                    )
+                    if isinstance(result, dict) and "error" in result:
+                        logger.error(f"Gradio wrapper error on priority retry: {result.get('message', result)}")
+                        return []
+
                 return result
         except Exception as e:
             logger.error(f"Search failed at {self.qdrant_url}. Error: {e}")

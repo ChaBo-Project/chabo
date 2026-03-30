@@ -3,39 +3,117 @@ import sys
 import os
 import json
 import pandas as pd
-from typing import List, Dict
-from langchain_core.documents import Document
+from dataclasses import dataclass
+from typing import List, Dict, Optional
 
 # Add src/ to path so imports match how main.py resolves them
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
 
 from components.retriever.retriever_orchestrator import create_retriever_from_config
 from components.generator.generator_orchestrator import Generator
-from components.utils import _acall_hf_endpoint
+from components.orchestration.nodes import extract_filters_node
+from components.utils import _acall_hf_endpoint, getconfig
+from components.retriever.filters import FILTER_VALUES
 
-from test_questions import questions
+from test_questions import standalone_questions, history_blocks, safeguard_questions
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 
+# Parse config (same logic as main.py)
+_config = getconfig("params.cfg")
+MAX_TURNS = _config.getint("conversation_history", "MAX_TURNS", fallback=3)
+_filterable_fields_raw = _config.get("metadata_filters", "filterable_fields", fallback="")
+FILTERABLE_FIELDS: Dict[str, str] = {}
+for _item in _filterable_fields_raw.split(","):
+    _item = _item.strip()
+    if ":" in _item:
+        _name, _ftype = _item.split(":", 1)
+        FILTERABLE_FIELDS[_name.strip()] = _ftype.strip()
+    elif _item:
+        FILTERABLE_FIELDS[_item] = "str"
 
-async def evaluate_questions(questions: List[str], retriever) -> List[Dict]:
+
+@dataclass
+class EvalCase:
+    question: str
+    subset: str                              # "standalone" | "history" | "safeguard"
+    user_messages_history: Optional[str]     # pre-built history string, None if not applicable
+
+
+def build_eval_suite() -> List[EvalCase]:
+    """Flatten the three test_questions subsets into a unified list of EvalCase objects.
+
+    History blocks: only the last turn is evaluated; prior turns (sliced to MAX_TURNS)
+    are passed as user_messages_history — mirroring what ui_adapters does in production.
+    """
+    cases = []
+
+    for q in standalone_questions:
+        cases.append(EvalCase(question=q, subset="standalone", user_messages_history=None))
+
+    for block in history_blocks:
+        if len(block) < 2:
+            continue
+        current_query = block[-1]
+        prior_turns = block[:-1][-MAX_TURNS:]
+        history_str = "\n".join(f"USER: {t}" for t in prior_turns)
+        cases.append(EvalCase(question=current_query, subset="history", user_messages_history=history_str))
+
+    for q in safeguard_questions:
+        cases.append(EvalCase(question=q, subset="safeguard", user_messages_history=None))
+
+    return cases
+
+
+def _result_path(base: str, filtered: bool) -> str:
+    suffix = "_filtered" if filtered else ""
+    return os.path.join(RESULTS_DIR, f"{base}{suffix}.json")
+
+
+async def evaluate_questions(
+    cases: List[EvalCase],
+    retriever,
+    generator=None,
+    filterable_fields: Dict[str, str] = None,
+    filter_values: Dict[str, list] = None,
+) -> List[Dict]:
+    """Run retrieval for each case. If generator is provided, extract filters first."""
     eval_data = []
-    for q in questions:
-        print(f"🧐 Processing: {q[:50]}...")
 
-        # 1. Get Embedding Vector
-        embed_payload = {"inputs": q}
-        embed_res = await _acall_hf_endpoint(retriever.embedding_endpoint_url, retriever.hf_token, embed_payload)
+    for case in cases:
+        print(f"🧐 [{case.subset}] Processing: {case.question[:50]}...")
+
+        # --- Filter extraction (filters mode only) ---
+        filters = None
+        if generator is not None:
+            state = {"query": case.question, "user_messages_history": case.user_messages_history}
+            result_state = await extract_filters_node(
+                state,
+                generator=generator,
+                filterable_fields=filterable_fields,
+                filter_values=filter_values,
+            )
+            filters = result_state.get("metadata_filters")
+            print(f"   Filters extracted: {filters}")
+
+        # --- Embed ---
+        embed_res = await _acall_hf_endpoint(
+            retriever.embedding_endpoint_url,
+            retriever.hf_token,
+            {"inputs": case.question},
+        )
         query_vector = embed_res[0]
 
-        # 2. Stage 1: Vector Search (Candidate Retrieval)
-        raw_candidates = await retriever._asearch_qdrant(query_vector)
+        # --- Stage 1: vector search ---
+        raw_candidates = await retriever._asearch_qdrant(query_vector, filters=filters)
 
-        # 3. Stage 2: Full Pipeline (Reranked)
-        final_docs = await retriever.ainvoke(q)
+        # --- Stage 2: full pipeline (rerank) ---
+        retriever_kwargs = {"filters": filters} if filters else {}
+        final_docs = await retriever.ainvoke(case.question, **retriever_kwargs)
 
-        eval_data.append({
-            "question": q,
+        entry = {
+            "question": case.question,
+            "subset": case.subset,
             "stage1_raw_vector_results": [
                 {"content": c.get("answer"), "score": c.get("score"), "metadata": c.get("answer_metadata")}
                 for c in raw_candidates
@@ -43,14 +121,19 @@ async def evaluate_questions(questions: List[str], retriever) -> List[Dict]:
             "stage2_reranked_results": [
                 {"content": d.page_content, "rerank_score": d.metadata.get("rerank_score"), "metadata": d.metadata}
                 for d in final_docs
-            ]
-        })
+            ],
+        }
+        if generator is not None:
+            entry["filters_applied"] = filters
+
+        eval_data.append(entry)
+
     return eval_data
 
 
-async def run_retrieval_only():
-    # Guard against placeholder questions
-    if not questions or all(len(q.split()) <= 1 for q in questions):
+async def run_retrieval_only(filters_enabled: bool):
+    all_questions = standalone_questions + [b[-1] for b in history_blocks if len(b) >= 2] + safeguard_questions
+    if not all_questions or all(len(q.split()) <= 1 for q in all_questions):
         print("💥 test_questions.py still has placeholder content.")
         print("   Edit tests/eval/test_questions.py and add real questions before running eval.")
         sys.exit(1)
@@ -62,10 +145,25 @@ async def run_retrieval_only():
         print(f"💥 Failed to load config/retriever: {e}")
         sys.exit(1)
 
-    results = await evaluate_questions(questions, retriever)
+    generator = None
+    if filters_enabled:
+        if not FILTERABLE_FIELDS:
+            print("💥 --filters passed but filterable_fields is empty in params.cfg. Aborting.")
+            sys.exit(1)
+        print("🔍 Filter extraction enabled. Initializing Generator for filter extraction...")
+        generator = Generator()
+
+    cases = build_eval_suite()
+    results = await evaluate_questions(
+        cases,
+        retriever,
+        generator=generator,
+        filterable_fields=FILTERABLE_FIELDS if filters_enabled else None,
+        filter_values=FILTER_VALUES if filters_enabled else None,
+    )
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    output_path = os.path.join(RESULTS_DIR, "retrieval_eval_results.json")
+    output_path = _result_path("retrieval_eval_results", filters_enabled)
 
     print("💾 Exporting results...")
     df = pd.DataFrame(results)
@@ -76,6 +174,7 @@ async def run_retrieval_only():
 
 
 async def get_judge_verdict(generator: Generator, query: str, content: str, metadata: dict):
+    from langchain_core.documents import Document
     context_as_docs = [Document(page_content=content, metadata=metadata)]
 
     judge_query = (
@@ -93,18 +192,16 @@ async def get_judge_verdict(generator: Generator, query: str, content: str, meta
     return response
 
 
-async def run_evaluation_batch(input_file=None):
+async def run_evaluation_batch(filters_enabled: bool, input_file=None):
     if input_file is None:
-        input_file = os.path.join(RESULTS_DIR, "retrieval_eval_results.json")
+        input_file = _result_path("retrieval_eval_results", filters_enabled)
 
     generator_instance = Generator()
-    output_filename = os.path.join(RESULTS_DIR, "judged_eval_report.json")
+    output_filename = _result_path("judged_eval_report", filters_enabled)
 
-    # 1. Load the source retrieval data
     with open(input_file, "r", encoding="utf-8") as f:
         source_data = json.load(f)
 
-    # 3. Load existing progress if it exists (checkpoint)
     final_report = []
     if os.path.exists(output_filename):
         with open(output_filename, "r", encoding="utf-8") as f:
@@ -113,10 +210,8 @@ async def run_evaluation_batch(input_file=None):
 
     processed_questions = {entry['question'] for entry in final_report}
 
-    # 4. Main Judging Loop
     for entry in source_data:
         user_q = entry['question']
-
         if user_q in processed_questions:
             continue
 
@@ -134,7 +229,6 @@ async def run_evaluation_batch(input_file=None):
 
         final_report.append(entry)
 
-        # 5. Save checkpoint after every question
         os.makedirs(RESULTS_DIR, exist_ok=True)
         with open(output_filename, "w", encoding="utf-8") as f:
             json.dump(final_report, f, ensure_ascii=False, indent=4)
@@ -145,9 +239,9 @@ async def run_evaluation_batch(input_file=None):
     sys.exit(0)
 
 
-async def run_sample_eval(input_file=None):
+async def run_sample_eval(filters_enabled: bool, input_file=None):
     if input_file is None:
-        input_file = os.path.join(RESULTS_DIR, "retrieval_eval_results.json")
+        input_file = _result_path("retrieval_eval_results", filters_enabled)
 
     generator_instance = Generator()
 
@@ -182,7 +276,7 @@ async def run_sample_eval(input_file=None):
         final_report.append(entry)
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    output_filename = os.path.join(RESULTS_DIR, "sample_judged_report.json")
+    output_filename = _result_path("sample_judged_report", filters_enabled)
     with open(output_filename, "w", encoding="utf-8") as f:
         json.dump(final_report, f, ensure_ascii=False, indent=4)
 
@@ -200,11 +294,17 @@ if __name__ == "__main__":
         default="retrieval",
         help="retrieval: run Stage 1 and save results | batch: judge with LLM (resumes from checkpoint) | sample: judge first 2 questions only"
     )
+    parser.add_argument(
+        "--filters",
+        action="store_true",
+        default=False,
+        help="Enable metadata filter extraction before retrieval. Results saved with '_filtered' suffix for comparison."
+    )
     args = parser.parse_args()
 
     modes = {
-        "retrieval": run_retrieval_only,
-        "batch": run_evaluation_batch,
-        "sample": run_sample_eval,
+        "retrieval": lambda: run_retrieval_only(args.filters),
+        "batch": lambda: run_evaluation_batch(args.filters),
+        "sample": lambda: run_sample_eval(args.filters),
     }
     asyncio.run(modes[args.mode]())

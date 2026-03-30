@@ -242,8 +242,21 @@ python tests/health/run_all.py
 | 1 | Reranker endpoint | Returns scores |
 | 2 | Retriever unit | Full retrieval + reranking returns ranked documents |
 | 2 | RAG pipeline | End-to-end retrieval → streaming generation with a sample query |
+| 2 | Metadata filters | Three sub-tests against live Qdrant: single-field filter returns docs; valid multi-field AND returns docs; impossible AND combination triggers the priority-field safeguard and retries with the first `filterable_fields` entry only |
 
 Step 2 (component checks) only runs if all Step 1 connectivity checks pass. Logs are written to `tests/health/logs/` with a timestamp for each run.
+
+> **Note — Metadata Filters check:** requires `filterable_fields` to be configured in `params.cfg` and the Qdrant collection to have the corresponding payload fields stored as nested dicts (not JSON strings).
+>
+> The three sub-tests are hardcoded to a sample corpus — **you must adapt them to your own collection** before running. Open `tests/health/test_components.py` and update the queries and filter values inside `test_metadata_filters()`:
+>
+> | Sub-test | What to change | Example (agriculture corpus) |
+> |----------|---------------|------------------------------|
+> | 1 — single field | Query + one valid field/value | `filters={"crop_type": ["wheat"]}` |
+> | 2 — valid AND | Query + two fields that co-exist in your data | `filters={"crop_type": ["maize"], "title": "Maize cultivation in the old and new lands"}` |
+> | 3 — safeguard | Query + an impossible combination (valid value for field 1, non-existent value for field 2) so AND returns 0 and the retry fires | `filters={"crop_type": ["wheat"], "title": "Cultivation and producing Maize"}` |
+>
+> The priority field (used in the safeguard retry) is always the **first key in `filterable_fields`** in `params.cfg`.
 
 ### Running individual scripts
 

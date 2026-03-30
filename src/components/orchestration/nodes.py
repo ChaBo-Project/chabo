@@ -237,20 +237,20 @@ async def extract_filters_node(
     Node to extract metadata filters from query + user conversation history before retrieval.
     No-op if filterable_fields is empty. Fails gracefully — retrieval proceeds unfiltered on any error.
 
-    Two-pass strategy:
-    - Pass 1: LLM extracts from current query only (precise, no history noise)
-    - Pass 2: if pass 1 yields nothing, LLM scans user_messages_history (user turns only,
-              no assistant responses or retrieved document content) for filters established
-              in prior turns and carries them forward
+    Single-pass strategy: one LLM call with both current query and user history.
+    For each field independently: extracts from current query first; if not found,
+    carries forward from user history (user turns only — no assistant responses or
+    retrieved document content). This ensures all applicable fields are extracted
+    regardless of which source contains them.
     """
     if not filterable_fields:
         logger.info("extract_filters_node: no filterable_fields configured, skipping")
-        return {}  # No state update — metadata_filters stays None
+        return {}
 
     query = state.get("query", "")
-    user_messages_history = state.get("user_messages_history")
+    user_messages_history = state.get("user_messages_history") or "(none)"
 
-    # Build field descriptions for the prompts, including valid values where available
+    # Build field descriptions including valid values where available
     field_descriptions = []
     for field, ftype in filterable_fields.items():
         valid_vals = filter_values.get(field)
@@ -267,62 +267,41 @@ async def extract_filters_node(
         field_descriptions.append(base)
     fields_desc = "\n".join(f"  - {d}" for d in field_descriptions)
 
-    base_system = (
+    system_msg = SystemMessage(content=(
         "You are a metadata filter extraction assistant.\n"
         f"Available filterable fields:\n{fields_desc}\n\n"
-        "Rules:\n"
-        "- Only extract filters EXPLICITLY stated by the user. Do NOT infer or assume values.\n"
+        "Extraction rules:\n"
+        "- Examine EACH field INDEPENDENTLY — finding a value for one field must not cause you to skip others.\n"
+        "- For EACH field: first check the CURRENT QUERY. If a value is explicitly stated, use it.\n"
+        "- For EACH field: if not found in CURRENT QUERY, check PREVIOUS USER MESSAGES for a value "
+        "established in an earlier turn that still logically applies. If found, carry it forward.\n"
+        "- Only extract values EXPLICITLY stated by the user. Do NOT infer or assume.\n"
         "- For fields with a valid values list, always pick the closest match from that list.\n"
         "- For list-type fields, output a JSON array of strings.\n"
         "- For str/int fields, output a single value.\n"
         "- Return ONLY a valid JSON object, no markdown fences, no explanation.\n"
-        "- If no filters are explicitly stated, return: {}\n"
+        "- If no filters found for any field, return: {}\n"
         f"- Only use keys from: {list(filterable_fields.keys())}"
-    )
+    ))
 
-    # --- Pass 1: current query only ---
+    human_msg = HumanMessage(content=(
+        f"### CURRENT QUERY\n{query}\n\n"
+        f"### PREVIOUS USER MESSAGES\n{user_messages_history}\n\n"
+        "For each available field independently: check current query first, then previous messages "
+        "if not found in current query. Return all applicable filters as a JSON object."
+    ))
+
     try:
-        messages_p1 = [
-            SystemMessage(content=base_system),
-            HumanMessage(content=f"### CURRENT QUERY\n{query}\n\nExtract metadata filters as a JSON object."),
-        ]
-        raw_p1 = await generator._call_llm(messages_p1)
-        filters = _parse_filter_response(raw_p1, filterable_fields)
+        raw = await generator._call_llm([system_msg, human_msg])
+        filters = _parse_filter_response(raw, filterable_fields)
     except Exception as e:
-        logger.warning(f"extract_filters_node: pass 1 LLM call failed ({e}). Proceeding without filters.")
+        logger.warning(f"extract_filters_node: LLM call failed ({e}). Proceeding without filters.")
         return {"metadata_filters": None}
 
     if filters:
-        logger.info(f"extract_filters_node: pass 1 extracted filters: {filters}")
-        return {"metadata_filters": filters}
-
-    # --- Pass 2: user history fallback ---
-    if not user_messages_history:
-        logger.info("extract_filters_node: no filters in current query and no user history, skipping")
-        return {"metadata_filters": None}
-
-    logger.info("extract_filters_node: pass 1 yielded nothing, checking user history")
-    try:
-        messages_p2 = [
-            SystemMessage(content=base_system),
-            HumanMessage(content=(
-                f"### PREVIOUS USER MESSAGES\n{user_messages_history}\n\n"
-                f"### CURRENT QUERY\n{query}\n\n"
-                "The current query may be a follow-up. Extract any metadata filters that were "
-                "established in the previous messages and still apply. "
-                "Return {} if no filters were previously established."
-            )),
-        ]
-        raw_p2 = await generator._call_llm(messages_p2)
-        filters = _parse_filter_response(raw_p2, filterable_fields)
-    except Exception as e:
-        logger.warning(f"extract_filters_node: pass 2 LLM call failed ({e}). Proceeding without filters.")
-        return {"metadata_filters": None}
-
-    if filters:
-        logger.info(f"extract_filters_node: pass 2 carried forward filters: {filters}")
+        logger.info(f"extract_filters_node: extracted filters: {filters}")
     else:
-        logger.info("extract_filters_node: no filters established in user history")
+        logger.info("extract_filters_node: no filters found in query or history")
 
     return {"metadata_filters": filters}
 

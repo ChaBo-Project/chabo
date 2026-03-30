@@ -5,6 +5,19 @@ import os
 logger = logging.getLogger("RAG_Test_Suite")
 
 
+class _LogCapture(logging.Handler):
+    """Minimal log handler to capture messages during a test."""
+    def __init__(self):
+        super().__init__()
+        self.messages = []
+
+    def emit(self, record):
+        self.messages.append(record.getMessage())
+
+    def contains(self, substr):
+        return any(substr in m for m in self.messages)
+
+
 async def check_embedding(retriever):
     """Verify the embedding endpoint returns a valid vector using the retriever's own config."""
     try:
@@ -133,3 +146,100 @@ async def run_full_pipeline_test(query, retriever_instance, generator_instance):
     except Exception as e:
         logger.error(f"❌ Full Pipeline Test Failed: {str(e)}", exc_info=True)
         return {"success": False, "error": str(e)}
+
+
+async def test_metadata_filters(retriever):
+    """
+    Tests metadata filtering against live Qdrant using the existing retriever instance.
+
+    Three sub-tests:
+    1. Single-field filter  — crop_type only, AND returns results as expected
+    2. Multi-field filter   — valid combination (crop_type + matching title), AND returns results
+    3. AND safeguard        — impossible combination (wheat crop_type + maize title),
+                              AND returns 0, safeguard retries with priority field (crop_type) only
+
+    Uses retriever.ainvoke(query, filters=...) — the same path as production.
+    """
+    if retriever.qdrant_mode.lower() not in ('native', 'gradio'):
+        logger.warning("⚠️  Metadata filter test skipped — unsupported qdrant_mode.")
+        return {"success": True, "skipped": True}
+
+    sub_results = {}
+
+    # ── Sub-test 1: single-field filter ──────────────────────────────────────
+    logger.info("⏳ [Filter Test 1/3] Single-field filter: crop_type=['wheat']")
+    try:
+        docs = await retriever.ainvoke(
+            "irrigation and planting requirements for wheat",
+            filters={"crop_type": ["wheat"]}
+        )
+        if not docs:
+            logger.error("❌ [Filter Test 1/3] No documents returned with crop_type filter.")
+            sub_results["single_field"] = False
+        else:
+            logger.info(f"✅ [Filter Test 1/3] Returned {len(docs)} docs with crop_type filter.")
+            sub_results["single_field"] = True
+    except Exception as e:
+        logger.error(f"❌ [Filter Test 1/3] Crashed: {e}", exc_info=True)
+        sub_results["single_field"] = False
+
+    # ── Sub-test 2: multi-field AND — valid combination ───────────────────────
+    logger.info("⏳ [Filter Test 2/3] Multi-field AND: crop_type=['maize'] + matching title")
+    try:
+        docs = await retriever.ainvoke(
+            "cultivation techniques for maize",
+            filters={
+                "crop_type": ["maize"],
+                "title": "Maize cultivation in the old and new lands"
+            }
+        )
+        if not docs:
+            logger.warning("⚠️  [Filter Test 2/3] AND returned 0 docs — combination may not exist in collection.")
+            sub_results["multi_field_and"] = False
+        else:
+            logger.info(f"✅ [Filter Test 2/3] AND returned {len(docs)} docs for valid crop+title combo.")
+            sub_results["multi_field_and"] = True
+    except Exception as e:
+        logger.error(f"❌ [Filter Test 2/3] Crashed: {e}", exc_info=True)
+        sub_results["multi_field_and"] = False
+
+    # ── Sub-test 3: AND safeguard — impossible combination ────────────────────
+    logger.info("⏳ [Filter Test 3/3] AND safeguard: crop_type=['wheat'] + maize title (impossible combo)")
+    cap = _LogCapture()
+    retriever_logger = logging.getLogger("components.retriever.retriever_orchestrator")
+    retriever_logger.addHandler(cap)
+    try:
+        docs = await retriever.ainvoke(
+            "cultivation techniques for wheat",
+            filters={
+                "crop_type": ["wheat"],
+                "title": "Cultivation and producing Maize"   # wheat + maize title = 0 AND results
+            }
+        )
+        safeguard_fired = cap.contains("AND filter returned 0 results")
+
+        if not safeguard_fired:
+            logger.warning(
+                "⚠️  [Filter Test 3/3] Safeguard did NOT fire — AND may have returned results "
+                "for this combo (collection data may differ). Check manually."
+            )
+        else:
+            logger.info("✅ [Filter Test 3/3] Safeguard fired as expected — AND returned 0, retried with priority field.")
+
+        if docs:
+            logger.info(f"✅ [Filter Test 3/3] Priority-field retry returned {len(docs)} docs.")
+        else:
+            logger.warning("⚠️  [Filter Test 3/3] Priority-field retry also returned 0 docs.")
+
+        sub_results["safeguard"] = safeguard_fired and bool(docs)
+    except Exception as e:
+        logger.error(f"❌ [Filter Test 3/3] Crashed: {e}", exc_info=True)
+        sub_results["safeguard"] = False
+    finally:
+        retriever_logger.removeHandler(cap)
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    passed = sum(sub_results.values())
+    total = len(sub_results)
+    logger.info(f"📊 Metadata Filter Tests: {passed}/{total} sub-tests passed — {sub_results}")
+    return {"success": all(sub_results.values()), "sub_results": sub_results}
