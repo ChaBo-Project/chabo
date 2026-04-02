@@ -1,4 +1,5 @@
 import asyncio
+import re
 import sys
 import os
 import json
@@ -181,7 +182,7 @@ async def get_judge_verdict(generator: Generator, query: str, content: str, meta
         f"[SYSTEM EVALUATION]\n"
         f"Task: Judge if the provided Context & Source answer the Question.\n"
         f"Question: \"{query}\"\n\n"
-        f"Response Format:\nREASON: [Short reasoning in English]\nVERDICT: [YES or NO]"
+        f"Response Format:\nREASON: [Short reasoning in English]\nVERDICT: YES or VERDICT: NO (exactly as written, no other characters)"
     )
 
     response = await generator.generate(
@@ -190,6 +191,14 @@ async def get_judge_verdict(generator: Generator, query: str, content: str, meta
         chatui_format=False
     )
     return response
+
+
+def _verdict_is_yes(judge_output: str) -> bool:
+    """Extract YES/NO verdict robustly, stripping markdown formatting and collapsing whitespace."""
+    clean = re.sub(r"[*_`#]", "", judge_output.upper())
+    clean = re.sub(r"\s+", " ", clean)
+    match = re.search(r"VERDICT\s*:\s*(YES|NO)", clean)
+    return bool(match and match.group(1) == "YES")
 
 
 async def run_evaluation_batch(filters_enabled: bool, input_file=None):
@@ -225,7 +234,7 @@ async def run_evaluation_batch(filters_enabled: bool, input_file=None):
                 doc['metadata']
             )
             doc['judge_raw_output'] = judge_output
-            doc['is_relevant'] = "VERDICT: YES" in judge_output.upper()
+            doc['is_relevant'] = _verdict_is_yes(judge_output)
 
         final_report.append(entry)
 
@@ -265,7 +274,7 @@ async def run_sample_eval(filters_enabled: bool, input_file=None):
                 doc['metadata']
             )
 
-            is_relevant = "VERDICT: YES" in judge_output.upper()
+            is_relevant = _verdict_is_yes(judge_output)
             doc['judge_raw_output'] = judge_output
             doc['is_relevant'] = is_relevant
 
