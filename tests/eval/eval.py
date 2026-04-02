@@ -1,4 +1,5 @@
 import asyncio
+import re
 import sys
 import os
 import json
@@ -181,7 +182,7 @@ async def get_judge_verdict(generator: Generator, query: str, content: str, meta
         f"[SYSTEM EVALUATION]\n"
         f"Task: Judge if the provided Context & Source answer the Question.\n"
         f"Question: \"{query}\"\n\n"
-        f"Response Format:\nREASON: [Short reasoning in English]\nVERDICT: [YES or NO]"
+        f"Response Format:\nREASON: [Short reasoning in English]\nVERDICT: YES or VERDICT: NO (exactly as written, no other characters)"
     )
 
     response = await generator.generate(
@@ -200,7 +201,7 @@ async def get_relevance_verdict(generator: Generator, query: str, content: str, 
         f"[SYSTEM EVALUATION]\n"
         f"Task: Judge if the provided Context & Source is relevant to the Question, even if it does not fully answer it.\n"
         f"Question: \"{query}\"\n\n"
-        f"Response Format:\nREASON: [Short reasoning in English]\nVERDICT: [YES or NO]"
+        f"Response Format:\nREASON: [Short reasoning in English]\nVERDICT: YES or VERDICT: NO (exactly as written, no other characters)"
     )
 
     response = await generator.generate(
@@ -212,13 +213,11 @@ async def get_relevance_verdict(generator: Generator, query: str, content: str, 
 
 
 def _verdict_is_yes(judge_output: str) -> bool:
-    """Extract YES/NO verdict robustly, stripping markdown formatting from the verdict line only."""
-    import re
-    for line in judge_output.upper().splitlines():
-        if "VERDICT" in line:
-            clean = re.sub(r"[*_`#]", "", line)
-            return "YES" in clean
-    return False
+    """Extract YES/NO verdict robustly, stripping markdown formatting and collapsing whitespace."""
+    clean = re.sub(r"[*_`#]", "", judge_output.upper())
+    clean = re.sub(r"\s+", " ", clean)
+    match = re.search(r"VERDICT\s*:\s*(YES|NO)", clean)
+    return bool(match and match.group(1) == "YES")
 
 
 async def run_evaluation_batch(filters_enabled: bool, judge: str = "answer", input_file=None):
