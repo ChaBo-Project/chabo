@@ -39,6 +39,7 @@ class EvalCase:
     question: str
     subset: str                              # "standalone" | "history" | "safeguard"
     user_messages_history: Optional[str]     # pre-built history string, None if not applicable
+    expected_filters: Optional[Dict]         # ground truth filters, None if no filter expected
 
 
 def build_eval_suite() -> List[EvalCase]:
@@ -49,21 +50,53 @@ def build_eval_suite() -> List[EvalCase]:
     """
     cases = []
 
-    for q in standalone_questions:
-        cases.append(EvalCase(question=q, subset="standalone", user_messages_history=None))
+    for item in standalone_questions:
+        cases.append(EvalCase(
+            question=item["question"],
+            subset="standalone",
+            user_messages_history=None,
+            expected_filters=item.get("expected_filters"),
+        ))
 
     for block in history_blocks:
-        if len(block) < 2:
+        turns = block["turns"]
+        if len(turns) < 2:
             continue
-        current_query = block[-1]
-        prior_turns = block[:-1][-MAX_TURNS:]
+        current_query = turns[-1]
+        prior_turns = turns[:-1][-MAX_TURNS:]
         history_str = "\n".join(f"USER: {t}" for t in prior_turns)
-        cases.append(EvalCase(question=current_query, subset="history", user_messages_history=history_str))
+        cases.append(EvalCase(
+            question=current_query,
+            subset="history",
+            user_messages_history=history_str,
+            expected_filters=block.get("expected_filters"),
+        ))
 
-    for q in safeguard_questions:
-        cases.append(EvalCase(question=q, subset="safeguard", user_messages_history=None))
+    for item in safeguard_questions:
+        cases.append(EvalCase(
+            question=item["question"],
+            subset="safeguard",
+            user_messages_history=None,
+            expected_filters=item.get("expected_filters"),
+        ))
 
     return cases
+
+
+def _check_filters(expected: Optional[Dict], extracted: Optional[Dict]) -> str:
+    """Compare extracted filters against ground truth and return a result category."""
+    if expected is None and extracted is None:
+        return "correct_none"
+    if expected is None and extracted is not None:
+        return "spurious_filter"
+    if expected is not None and extracted is None:
+        return "no_filter"
+    if expected == extracted:
+        return "exact_match"
+    matching_fields = [k for k in expected if extracted.get(k) == expected[k]]
+    if matching_fields:
+        return "partial_match"
+    return "mismatch"
 
 
 def _result_path(base: str, filtered: bool) -> str:
@@ -95,7 +128,8 @@ async def evaluate_questions(
                 filter_values=filter_values,
             )
             filters = result_state.get("metadata_filters")
-            print(f"   Filters extracted: {filters}")
+            filter_check = _check_filters(case.expected_filters, filters)
+            print(f"   Filters extracted: {filters} | check: {filter_check}")
 
         # --- Embed ---
         embed_res = await _acall_hf_endpoint(
@@ -126,6 +160,11 @@ async def evaluate_questions(
         }
         if generator is not None:
             entry["filters_applied"] = filters
+            entry["filter_check"] = {
+                "expected": case.expected_filters,
+                "extracted": filters,
+                "result": filter_check,
+            }
 
         eval_data.append(entry)
 
@@ -133,7 +172,11 @@ async def evaluate_questions(
 
 
 async def run_retrieval_only(filters_enabled: bool):
-    all_questions = standalone_questions + [b[-1] for b in history_blocks if len(b) >= 2] + safeguard_questions
+    all_questions = (
+        [item["question"] for item in standalone_questions]
+        + [block["turns"][-1] for block in history_blocks if len(block["turns"]) >= 2]
+        + [item["question"] for item in safeguard_questions]
+    )
     if not all_questions or all(len(q.split()) <= 1 for q in all_questions):
         print("💥 test_questions.py still has placeholder content.")
         print("   Edit tests/eval/test_questions.py and add real questions before running eval.")
@@ -170,7 +213,16 @@ async def run_retrieval_only(filters_enabled: bool):
     df = pd.DataFrame(results)
     df.to_json(output_path, orient="records", indent=4, force_ascii=False)
 
-    print(f"✅ Retrieval complete! Results saved to {output_path}")
+    if filters_enabled:
+        counts: Dict[str, int] = {}
+        for entry in results:
+            result = entry.get("filter_check", {}).get("result", "not_annotated")
+            counts[result] = counts.get(result, 0) + 1
+        print("\n📊 Filter extraction summary:")
+        for outcome, count in sorted(counts.items()):
+            print(f"   {outcome}: {count}")
+
+    print(f"\n✅ Retrieval complete! Results saved to {output_path}")
     sys.exit(0)
 
 
