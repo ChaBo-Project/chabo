@@ -192,7 +192,36 @@ async def get_judge_verdict(generator: Generator, query: str, content: str, meta
     return response
 
 
-async def run_evaluation_batch(filters_enabled: bool, input_file=None):
+async def get_relevance_verdict(generator: Generator, query: str, content: str, metadata: dict):
+    from langchain_core.documents import Document
+    context_as_docs = [Document(page_content=content, metadata=metadata)]
+
+    judge_query = (
+        f"[SYSTEM EVALUATION]\n"
+        f"Task: Judge if the provided Context & Source is relevant to the Question, even if it does not fully answer it.\n"
+        f"Question: \"{query}\"\n\n"
+        f"Response Format:\nREASON: [Short reasoning in English]\nVERDICT: [YES or NO]"
+    )
+
+    response = await generator.generate(
+        query=judge_query,
+        context=context_as_docs,
+        chatui_format=False
+    )
+    return response
+
+
+def _verdict_is_yes(judge_output: str) -> bool:
+    """Extract YES/NO verdict robustly, stripping markdown formatting from the verdict line only."""
+    import re
+    for line in judge_output.upper().splitlines():
+        if "VERDICT" in line:
+            clean = re.sub(r"[*_`#]", "", line)
+            return "YES" in clean
+    return False
+
+
+async def run_evaluation_batch(filters_enabled: bool, judge: str = "answer", input_file=None):
     if input_file is None:
         input_file = _result_path("retrieval_eval_results", filters_enabled)
 
@@ -210,6 +239,9 @@ async def run_evaluation_batch(filters_enabled: bool, input_file=None):
 
     processed_questions = {entry['question'] for entry in final_report}
 
+    run_answer = judge in ("answer", "both")
+    run_relevance = judge in ("relevance", "both")
+
     for entry in source_data:
         user_q = entry['question']
         if user_q in processed_questions:
@@ -218,14 +250,14 @@ async def run_evaluation_batch(filters_enabled: bool, input_file=None):
         print(f"⚖️ Judging results for: {user_q[:40]}...")
 
         for doc in entry['stage2_reranked_results']:
-            judge_output = await get_judge_verdict(
-                generator_instance,
-                user_q,
-                doc['content'],
-                doc['metadata']
-            )
-            doc['judge_raw_output'] = judge_output
-            doc['is_relevant'] = "VERDICT: YES" in judge_output.upper()
+            if run_answer:
+                output = await get_judge_verdict(generator_instance, user_q, doc['content'], doc['metadata'])
+                doc['judge_raw_output'] = output
+                doc['is_relevant'] = _verdict_is_yes(output)
+            if run_relevance:
+                output = await get_relevance_verdict(generator_instance, user_q, doc['content'], doc['metadata'])
+                doc['relevance_judge_raw_output'] = output
+                doc['is_topically_relevant'] = _verdict_is_yes(output)
 
         final_report.append(entry)
 
@@ -239,7 +271,7 @@ async def run_evaluation_batch(filters_enabled: bool, input_file=None):
     sys.exit(0)
 
 
-async def run_sample_eval(filters_enabled: bool, input_file=None):
+async def run_sample_eval(filters_enabled: bool, judge: str = "answer", input_file=None):
     if input_file is None:
         input_file = _result_path("retrieval_eval_results", filters_enabled)
 
@@ -251,6 +283,9 @@ async def run_sample_eval(filters_enabled: bool, input_file=None):
     sample_data = data[:2]
     final_report = []
 
+    run_answer = judge in ("answer", "both")
+    run_relevance = judge in ("relevance", "both")
+
     print(f"🚀 Starting Sample Run: Evaluating {len(sample_data)} queries...")
 
     for entry in sample_data:
@@ -258,20 +293,23 @@ async def run_sample_eval(filters_enabled: bool, input_file=None):
         print(f"\n🔍 Query: {user_q}")
 
         for i, doc in enumerate(entry['stage2_reranked_results']):
-            judge_output = await get_judge_verdict(
-                generator_instance,
-                user_q,
-                doc['content'],
-                doc['metadata']
-            )
-
-            is_relevant = "VERDICT: YES" in judge_output.upper()
-            doc['judge_raw_output'] = judge_output
-            doc['is_relevant'] = is_relevant
-
-            status = "✅ RELEVANT" if is_relevant else "❌ IRRELEVANT"
-            print(f"  - Doc {i+1}: {status}")
-            print(f"    Reasoning: {judge_output.split('REASON:')[1].split('VERDICT:')[0].strip() if 'REASON:' in judge_output else 'N/A'}")
+            print(f"  - Doc {i+1}:")
+            if run_answer:
+                output = await get_judge_verdict(generator_instance, user_q, doc['content'], doc['metadata'])
+                is_relevant = _verdict_is_yes(output)
+                doc['judge_raw_output'] = output
+                doc['is_relevant'] = is_relevant
+                status = "✅ ANSWERS" if is_relevant else "❌ DOES NOT ANSWER"
+                print(f"    [Answer judge]    {status}")
+                print(f"    Reasoning: {output.split('REASON:')[1].split('VERDICT:')[0].strip() if 'REASON:' in output else 'N/A'}")
+            if run_relevance:
+                output = await get_relevance_verdict(generator_instance, user_q, doc['content'], doc['metadata'])
+                is_topically_relevant = _verdict_is_yes(output)
+                doc['relevance_judge_raw_output'] = output
+                doc['is_topically_relevant'] = is_topically_relevant
+                status = "✅ RELEVANT" if is_topically_relevant else "❌ NOT RELEVANT"
+                print(f"    [Relevance judge] {status}")
+                print(f"    Reasoning: {output.split('REASON:')[1].split('VERDICT:')[0].strip() if 'REASON:' in output else 'N/A'}")
 
         final_report.append(entry)
 
@@ -300,11 +338,17 @@ if __name__ == "__main__":
         default=False,
         help="Enable metadata filter extraction before retrieval. Results saved with '_filtered' suffix for comparison."
     )
+    parser.add_argument(
+        "--judge",
+        choices=["answer", "relevance", "both"],
+        default="answer",
+        help="answer: judge if context answers the question | relevance: judge if context is topically relevant (more lenient) | both: run both judges"
+    )
     args = parser.parse_args()
 
     modes = {
         "retrieval": lambda: run_retrieval_only(args.filters),
-        "batch": lambda: run_evaluation_batch(args.filters),
-        "sample": lambda: run_sample_eval(args.filters),
+        "batch": lambda: run_evaluation_batch(args.filters, args.judge),
+        "sample": lambda: run_sample_eval(args.filters, args.judge),
     }
     asyncio.run(modes[args.mode]())
