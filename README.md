@@ -391,44 +391,15 @@ When running with `--filters`, the extracted filters are automatically compared 
 - **`retrieval_eval_results_filtered.json`** — full retrieval results, each entry includes a `filter_check` field with `expected`, `extracted`, and `result`
 - **`filter_check_report_filtered.json`** — a dedicated report for at-a-glance inspection
 
-The report is structured as follows:
-
-```json
-{
-    "summary": {
-        "total": 4,
-        "score": 0.875,
-        "score_note": "exact_match=1pt, partial_match=0.5pt, all others=0pt",
-        "exact_match": 3,
-        "partial_match": 1
-    },
-    "by_subset": {
-        "standalone": { "total": 2, "score": 1.0, "exact_match": 2 },
-        "history":    { "total": 1, "score": 0.5, "partial_match": 1 },
-        "safeguard":  { "total": 1, "score": 1.0, "correct_none": 1 }
-    },
-    "details": [
-        {
-            "question": "...",
-            "subset": "standalone",
-            "expected": {"crop": "wheat"},
-            "extracted": {"crop": "wheat"},
-            "result": "exact_match"
-        }
-    ]
-}
-```
-
 Possible `result` values:
 
 | Result | Meaning |
 |--------|---------|
-| `exact_match` | Extracted filter matches expected exactly |
+| `correct` | Extraction matches expected exactly, or no filter expected and none extracted |
 | `partial_match` | At least one field matches, others wrong or missing |
 | `mismatch` | Filter was extracted but no fields match expected |
 | `no_filter` | A filter was expected but none was extracted |
 | `spurious_filter` | No filter was expected but one was extracted |
-| `correct_none` | No filter expected and none extracted |
 
 A console summary is also printed at the end of each `--mode retrieval --filters` run.
 

@@ -86,13 +86,13 @@ def build_eval_suite() -> List[EvalCase]:
 def _check_filters(expected: Optional[Dict], extracted: Optional[Dict]) -> str:
     """Compare extracted filters against ground truth and return a result category."""
     if expected is None and extracted is None:
-        return "correct_none"
+        return "correct"
     if expected is None and extracted is not None:
         return "spurious_filter"
     if expected is not None and extracted is None:
         return "no_filter"
     if expected == extracted:
-        return "exact_match"
+        return "correct"
     matching_fields = [k for k in expected if extracted.get(k) == expected[k]]
     if matching_fields:
         return "partial_match"
@@ -177,11 +177,11 @@ def _subset_score(subset_details: List[Dict]) -> Dict:
     for d in subset_details:
         counts[d["result"]] = counts.get(d["result"], 0) + 1
     total = len(subset_details)
-    exact = counts.get("exact_match", 0)
+    correct = counts.get("correct", 0)
     partial = counts.get("partial_match", 0)
     return {
         "total": total,
-        "score": round((exact + 0.5 * partial) / total, 3) if total > 0 else 0.0,
+        "score": round((correct + 0.5 * partial) / total, 3) if total > 0 else 0.0,
         **counts,
     }
 
@@ -204,9 +204,9 @@ def _export_filter_report(results: List[Dict], filters_enabled: bool) -> None:
         })
 
     total = len(details)
-    exact = counts.get("exact_match", 0)
+    correct = counts.get("correct", 0)
     partial = counts.get("partial_match", 0)
-    score = round((exact + 0.5 * partial) / total, 3) if total > 0 else 0.0
+    score = round((correct + 0.5 * partial) / total, 3) if total > 0 else 0.0
 
     subsets = ["standalone", "history", "safeguard"]
     by_subset = {
@@ -219,7 +219,7 @@ def _export_filter_report(results: List[Dict], filters_enabled: bool) -> None:
         "summary": {
             "total": total,
             "score": score,
-            "score_note": "exact_match=1pt, partial_match=0.5pt, all others=0pt",
+            "score_note": "correct=1pt, partial_match=0.5pt, all others=0pt",
             **counts,
         },
         "by_subset": by_subset,
@@ -233,7 +233,7 @@ def _export_filter_report(results: List[Dict], filters_enabled: bool) -> None:
     print("\n📊 Filter extraction summary:")
     for outcome, count in sorted(counts.items()):
         print(f"   {outcome}: {count}")
-    print(f"   score: {score} ({exact} exact + {partial} partial out of {total})")
+    print(f"   score: {score} ({correct} correct + {partial} partial out of {total})")
     print(f"💾 Filter report saved to {report_path}")
 
 
