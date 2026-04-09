@@ -171,6 +171,72 @@ async def evaluate_questions(
     return eval_data
 
 
+def _subset_score(subset_details: List[Dict]) -> Dict:
+    """Compute counts and score for a list of detail entries."""
+    counts: Dict[str, int] = {}
+    for d in subset_details:
+        counts[d["result"]] = counts.get(d["result"], 0) + 1
+    total = len(subset_details)
+    exact = counts.get("exact_match", 0)
+    partial = counts.get("partial_match", 0)
+    return {
+        "total": total,
+        "score": round((exact + 0.5 * partial) / total, 3) if total > 0 else 0.0,
+        **counts,
+    }
+
+
+def _export_filter_report(results: List[Dict], filters_enabled: bool) -> None:
+    """Write a standalone filter check report and print a console summary."""
+    details = []
+    counts: Dict[str, int] = {}
+
+    for entry in results:
+        fc = entry.get("filter_check", {})
+        result = fc.get("result", "not_annotated")
+        counts[result] = counts.get(result, 0) + 1
+        details.append({
+            "question": entry["question"],
+            "subset": entry["subset"],
+            "expected": fc.get("expected"),
+            "extracted": fc.get("extracted"),
+            "result": result,
+        })
+
+    total = len(details)
+    exact = counts.get("exact_match", 0)
+    partial = counts.get("partial_match", 0)
+    score = round((exact + 0.5 * partial) / total, 3) if total > 0 else 0.0
+
+    subsets = ["standalone", "history", "safeguard"]
+    by_subset = {
+        s: _subset_score([d for d in details if d["subset"] == s])
+        for s in subsets
+        if any(d["subset"] == s for d in details)
+    }
+
+    report = {
+        "summary": {
+            "total": total,
+            "score": score,
+            "score_note": "exact_match=1pt, partial_match=0.5pt, all others=0pt",
+            **counts,
+        },
+        "by_subset": by_subset,
+        "details": details,
+    }
+
+    report_path = _result_path("filter_check_report", filters_enabled)
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=4)
+
+    print("\n📊 Filter extraction summary:")
+    for outcome, count in sorted(counts.items()):
+        print(f"   {outcome}: {count}")
+    print(f"   score: {score} ({exact} exact + {partial} partial out of {total})")
+    print(f"💾 Filter report saved to {report_path}")
+
+
 async def run_retrieval_only(filters_enabled: bool):
     all_questions = (
         [item["question"] for item in standalone_questions]
@@ -214,13 +280,7 @@ async def run_retrieval_only(filters_enabled: bool):
     df.to_json(output_path, orient="records", indent=4, force_ascii=False)
 
     if filters_enabled:
-        counts: Dict[str, int] = {}
-        for entry in results:
-            result = entry.get("filter_check", {}).get("result", "not_annotated")
-            counts[result] = counts.get(result, 0) + 1
-        print("\n📊 Filter extraction summary:")
-        for outcome, count in sorted(counts.items()):
-            print(f"   {outcome}: {count}")
+        _export_filter_report(results, filters_enabled)
 
     print(f"\n✅ Retrieval complete! Results saved to {output_path}")
     sys.exit(0)

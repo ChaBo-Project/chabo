@@ -319,16 +319,39 @@ source chabo_env/bin/activate
 
 ### Define your test questions
 
-Edit `tests/eval/test_questions.py` to add your evaluation questions.
+Edit `tests/eval/test_questions.py` to add your evaluation questions. Questions are organised into three subsets:
 
-These should be realistic queries representative of what actual users ask — curated with
-knowledge of your corpus. The examples below assume an **agriculture knowledge base**;
-replace them with questions relevant to your own domain:
+- **`standalone_questions`** — each query explicitly contains a filterable value; evaluated with no history
+- **`history_blocks`** — conversation sequences where later turns rely on filter carry-forward; only the last turn per block is evaluated
+- **`safeguard_questions`** — contradictory or unlikely field combinations that should trigger the AND-safeguard fallback
+
+Each entry includes an `expected_filters` field used for ground truth filter checking (see [Filter Ground Truth Checking](#filter-ground-truth-checking) below). Set it to the filter dict you expect the LLM to extract, or `None` if no filter is expected.
+
+These should be realistic queries representative of what actual users ask — curated with knowledge of your corpus. The examples below assume an **agriculture knowledge base**; replace them with questions and filter values relevant to your own domain:
 
 ```python
-questions = [
-    "What irrigation method is recommended for sugarcane on new land?",
-    "How do I treat fungal disease in strawberry crops?",
+standalone_questions = [
+    {
+        "question": "What irrigation method is recommended for sugarcane on new land?",
+        "expected_filters": {"crop": "sugarcane"},
+    },
+]
+
+history_blocks = [
+    {
+        "turns": [
+            "I'm looking for information about wheat crop management.",
+            "What are the recommended pesticide applications?",
+        ],
+        "expected_filters": {"crop": "wheat"},
+    },
+]
+
+safeguard_questions = [
+    {
+        "question": "What does the maize report on wheat fertilisation say?",
+        "expected_filters": None,
+    },
 ]
 ```
 
@@ -338,14 +361,20 @@ questions = [
 
 ### Run evaluation
 
-Pass the `--mode` flag to select which stage to run:
+Pass the `--mode` flag to select which stage to run, and `--filters` to enable metadata filter extraction:
 
 ```bash
 # Step 1: Run retrieval and save results
 python tests/eval/eval.py --mode retrieval
 
+# Step 1 with metadata filter extraction and ground truth checking
+python tests/eval/eval.py --mode retrieval --filters
+
 # Step 2: Judge retrieved results with LLM (resumes from checkpoint if interrupted)
 python tests/eval/eval.py --mode batch
+
+# Step 2 with filters (judges the filtered retrieval results)
+python tests/eval/eval.py --mode batch --filters
 
 # Quick sample run (first 2 questions only, useful for testing)
 python tests/eval/eval.py --mode sample
@@ -353,7 +382,55 @@ python tests/eval/eval.py --mode sample
 
 `--mode retrieval` is the default if no flag is provided.
 
-Results are saved to `tests/eval/results/` (gitignored).
+Results are saved to `tests/eval/results/` (gitignored). The `--filters` flag appends `_filtered` to all output filenames — compare `judged_eval_report.json` vs `judged_eval_report_filtered.json` to measure the impact of filtering on retrieval quality.
+
+### Filter Ground Truth Checking
+
+When running with `--filters`, the extracted filters are automatically compared against `expected_filters` from `test_questions.py`. Two files are produced:
+
+- **`retrieval_eval_results_filtered.json`** — full retrieval results, each entry includes a `filter_check` field with `expected`, `extracted`, and `result`
+- **`filter_check_report_filtered.json`** — a dedicated report for at-a-glance inspection
+
+The report is structured as follows:
+
+```json
+{
+    "summary": {
+        "total": 4,
+        "score": 0.875,
+        "score_note": "exact_match=1pt, partial_match=0.5pt, all others=0pt",
+        "exact_match": 3,
+        "partial_match": 1
+    },
+    "by_subset": {
+        "standalone": { "total": 2, "score": 1.0, "exact_match": 2 },
+        "history":    { "total": 1, "score": 0.5, "partial_match": 1 },
+        "safeguard":  { "total": 1, "score": 1.0, "correct_none": 1 }
+    },
+    "details": [
+        {
+            "question": "...",
+            "subset": "standalone",
+            "expected": {"crop": "wheat"},
+            "extracted": {"crop": "wheat"},
+            "result": "exact_match"
+        }
+    ]
+}
+```
+
+Possible `result` values:
+
+| Result | Meaning |
+|--------|---------|
+| `exact_match` | Extracted filter matches expected exactly |
+| `partial_match` | At least one field matches, others wrong or missing |
+| `mismatch` | Filter was extracted but no fields match expected |
+| `no_filter` | A filter was expected but none was extracted |
+| `spurious_filter` | No filter was expected but one was extracted |
+| `correct_none` | No filter expected and none extracted |
+
+A console summary is also printed at the end of each `--mode retrieval --filters` run.
 
 ---
 
