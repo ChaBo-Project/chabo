@@ -1,4 +1,5 @@
 import asyncio
+import re
 import sys
 import os
 import json
@@ -38,6 +39,7 @@ class EvalCase:
     question: str
     subset: str                              # "standalone" | "history" | "safeguard"
     user_messages_history: Optional[str]     # pre-built history string, None if not applicable
+    expected_filters: Optional[Dict]         # ground truth filters, None if no filter expected
 
 
 def build_eval_suite() -> List[EvalCase]:
@@ -48,21 +50,53 @@ def build_eval_suite() -> List[EvalCase]:
     """
     cases = []
 
-    for q in standalone_questions:
-        cases.append(EvalCase(question=q, subset="standalone", user_messages_history=None))
+    for item in standalone_questions:
+        cases.append(EvalCase(
+            question=item["question"],
+            subset="standalone",
+            user_messages_history=None,
+            expected_filters=item.get("expected_filters"),
+        ))
 
     for block in history_blocks:
-        if len(block) < 2:
+        turns = block["turns"]
+        if len(turns) < 2:
             continue
-        current_query = block[-1]
-        prior_turns = block[:-1][-MAX_TURNS:]
+        current_query = turns[-1]
+        prior_turns = turns[:-1][-MAX_TURNS:]
         history_str = "\n".join(f"USER: {t}" for t in prior_turns)
-        cases.append(EvalCase(question=current_query, subset="history", user_messages_history=history_str))
+        cases.append(EvalCase(
+            question=current_query,
+            subset="history",
+            user_messages_history=history_str,
+            expected_filters=block.get("expected_filters"),
+        ))
 
-    for q in safeguard_questions:
-        cases.append(EvalCase(question=q, subset="safeguard", user_messages_history=None))
+    for item in safeguard_questions:
+        cases.append(EvalCase(
+            question=item["question"],
+            subset="safeguard",
+            user_messages_history=None,
+            expected_filters=item.get("expected_filters"),
+        ))
 
     return cases
+
+
+def _check_filters(expected: Optional[Dict], extracted: Optional[Dict]) -> str:
+    """Compare extracted filters against ground truth and return a result category."""
+    if expected is None and extracted is None:
+        return "correct"
+    if expected is None and extracted is not None:
+        return "spurious_filter"
+    if expected is not None and extracted is None:
+        return "no_filter"
+    if expected == extracted:
+        return "correct"
+    matching_fields = [k for k in expected if extracted.get(k) == expected[k]]
+    if matching_fields:
+        return "partial_match"
+    return "mismatch"
 
 
 def _result_path(base: str, filtered: bool) -> str:
@@ -94,7 +128,8 @@ async def evaluate_questions(
                 filter_values=filter_values,
             )
             filters = result_state.get("metadata_filters")
-            print(f"   Filters extracted: {filters}")
+            filter_check = _check_filters(case.expected_filters, filters)
+            print(f"   Filters extracted: {filters} | check: {filter_check}")
 
         # --- Embed ---
         embed_res = await _acall_hf_endpoint(
@@ -125,14 +160,89 @@ async def evaluate_questions(
         }
         if generator is not None:
             entry["filters_applied"] = filters
+            entry["filter_check"] = {
+                "expected": case.expected_filters,
+                "extracted": filters,
+                "result": filter_check,
+            }
 
         eval_data.append(entry)
 
     return eval_data
 
 
+def _subset_score(subset_details: List[Dict]) -> Dict:
+    """Compute counts and score for a list of detail entries."""
+    counts: Dict[str, int] = {}
+    for d in subset_details:
+        counts[d["result"]] = counts.get(d["result"], 0) + 1
+    total = len(subset_details)
+    correct = counts.get("correct", 0)
+    partial = counts.get("partial_match", 0)
+    return {
+        "total": total,
+        "score": round((correct + 0.5 * partial) / total, 3) if total > 0 else 0.0,
+        **counts,
+    }
+
+
+def _export_filter_report(results: List[Dict], filters_enabled: bool) -> None:
+    """Write a standalone filter check report and print a console summary."""
+    details = []
+    counts: Dict[str, int] = {}
+
+    for entry in results:
+        fc = entry.get("filter_check", {})
+        result = fc.get("result", "not_annotated")
+        counts[result] = counts.get(result, 0) + 1
+        details.append({
+            "question": entry["question"],
+            "subset": entry["subset"],
+            "expected": fc.get("expected"),
+            "extracted": fc.get("extracted"),
+            "result": result,
+        })
+
+    total = len(details)
+    correct = counts.get("correct", 0)
+    partial = counts.get("partial_match", 0)
+    score = round((correct + 0.5 * partial) / total, 3) if total > 0 else 0.0
+
+    subsets = ["standalone", "history", "safeguard"]
+    by_subset = {
+        s: _subset_score([d for d in details if d["subset"] == s])
+        for s in subsets
+        if any(d["subset"] == s for d in details)
+    }
+
+    report = {
+        "summary": {
+            "total": total,
+            "score": score,
+            "score_note": "correct=1pt, partial_match=0.5pt, all others=0pt",
+            **counts,
+        },
+        "by_subset": by_subset,
+        "details": details,
+    }
+
+    report_path = _result_path("filter_check_report", filters_enabled)
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=4)
+
+    print("\n📊 Filter extraction summary:")
+    for outcome, count in sorted(counts.items()):
+        print(f"   {outcome}: {count}")
+    print(f"   score: {score} ({correct} correct + {partial} partial out of {total})")
+    print(f"💾 Filter report saved to {report_path}")
+
+
 async def run_retrieval_only(filters_enabled: bool):
-    all_questions = standalone_questions + [b[-1] for b in history_blocks if len(b) >= 2] + safeguard_questions
+    all_questions = (
+        [item["question"] for item in standalone_questions]
+        + [block["turns"][-1] for block in history_blocks if len(block["turns"]) >= 2]
+        + [item["question"] for item in safeguard_questions]
+    )
     if not all_questions or all(len(q.split()) <= 1 for q in all_questions):
         print("💥 test_questions.py still has placeholder content.")
         print("   Edit tests/eval/test_questions.py and add real questions before running eval.")
@@ -169,7 +279,10 @@ async def run_retrieval_only(filters_enabled: bool):
     df = pd.DataFrame(results)
     df.to_json(output_path, orient="records", indent=4, force_ascii=False)
 
-    print(f"✅ Retrieval complete! Results saved to {output_path}")
+    if filters_enabled:
+        _export_filter_report(results, filters_enabled)
+
+    print(f"\n✅ Retrieval complete! Results saved to {output_path}")
     sys.exit(0)
 
 
@@ -181,7 +294,7 @@ async def get_judge_verdict(generator: Generator, query: str, content: str, meta
         f"[SYSTEM EVALUATION]\n"
         f"Task: Judge if the provided Context & Source answer the Question.\n"
         f"Question: \"{query}\"\n\n"
-        f"Response Format:\nREASON: [Short reasoning in English]\nVERDICT: [YES or NO]"
+        f"Response Format:\nREASON: [Short reasoning in English]\nVERDICT: YES or VERDICT: NO (exactly as written, no other characters)"
     )
 
     response = await generator.generate(
@@ -190,6 +303,14 @@ async def get_judge_verdict(generator: Generator, query: str, content: str, meta
         chatui_format=False
     )
     return response
+
+
+def _verdict_is_yes(judge_output: str) -> bool:
+    """Extract YES/NO verdict robustly, stripping markdown formatting and collapsing whitespace."""
+    clean = re.sub(r"[*_`#]", "", judge_output.upper())
+    clean = re.sub(r"\s+", " ", clean)
+    match = re.search(r"VERDICT\s*:\s*(YES|NO)", clean)
+    return bool(match and match.group(1) == "YES")
 
 
 async def run_evaluation_batch(filters_enabled: bool, input_file=None):
@@ -225,7 +346,7 @@ async def run_evaluation_batch(filters_enabled: bool, input_file=None):
                 doc['metadata']
             )
             doc['judge_raw_output'] = judge_output
-            doc['is_relevant'] = "VERDICT: YES" in judge_output.upper()
+            doc['is_relevant'] = _verdict_is_yes(judge_output)
 
         final_report.append(entry)
 
@@ -265,7 +386,7 @@ async def run_sample_eval(filters_enabled: bool, input_file=None):
                 doc['metadata']
             )
 
-            is_relevant = "VERDICT: YES" in judge_output.upper()
+            is_relevant = _verdict_is_yes(judge_output)
             doc['judge_raw_output'] = judge_output
             doc['is_relevant'] = is_relevant
 
