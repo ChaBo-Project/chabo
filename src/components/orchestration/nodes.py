@@ -23,11 +23,14 @@ if TYPE_CHECKING:
 
 async def retrieve_node(
     state: 'GraphState',
-    retriever: 'ChaBoHFEndpointRetriever' # Injected LangChain BaseRetriever instance
+    retriever: 'ChaBoHFEndpointRetriever', # Injected LangChain BaseRetriever instance
+    *,
+    writer
     ) -> 'GraphState':
     """
     Node to retrieve relevant context using the ChaBoHFEndpointRetriever.
     The retriever performs Embed -> Search -> Rerank in one async call.
+    Emits a 'filters_applied' custom event so adapters can surface the footnote to ChatUI.
     """
 
     start_time = datetime.now()
@@ -49,6 +52,12 @@ async def retrieve_node(
             **retriever_kwargs
         )
 
+        # Emit the actual filter used (post AND-safeguard) so adapters can display it
+        applied_filter = retriever._last_applied_filter
+        narrowed = retriever._last_narrowed
+        if applied_filter:
+            writer({"event": "filters_applied", "data": {"filters": applied_filter, "narrowed": narrowed}})
+
         duration = (datetime.now() - start_time).total_seconds()
         retriever_config = {
             "initial_k": retriever.initial_k,
@@ -66,7 +75,9 @@ async def retrieve_node(
         })
         return {
             "raw_documents": raw_documents,
-            "metadata": metadata
+            "metadata": metadata,
+            "applied_filters": applied_filter,
+            "filters_narrowed": narrowed,
         }
 
     except Exception as e:

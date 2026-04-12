@@ -6,7 +6,7 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 from typing import List, Dict, Any, Union, Optional
-from pydantic import Field
+from pydantic import Field, PrivateAttr
 from qdrant_client import QdrantClient, AsyncQdrantClient
 from gradio_client import Client as GradioClient
 from langchain_core.documents import Document
@@ -76,6 +76,10 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
     sync_qdrant_client: QdrantClient = Field(default=None, exclude=True)
     async_qdrant_client: AsyncQdrantClient = Field(default=None, exclude=True)
     gradio_client: GradioClient = Field(default=None, exclude=True)
+
+    # Track what was actually applied (post AND-safeguard) so nodes can emit it
+    _last_applied_filter: Optional[Dict] = PrivateAttr(default=None)
+    _last_narrowed: bool = PrivateAttr(default=False)
 
 
     # --- Client Lazy Initialization  ---
@@ -147,6 +151,8 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
             
             if self.qdrant_mode.lower() == 'native':
                 logger.debug(f"Sync Native Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
+                self._last_applied_filter = filters
+                self._last_narrowed = False
                 search_result = client.query_points(
                     collection_name=self.qdrant_collection,
                     query=query_vector,
@@ -172,11 +178,15 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                         with_payload=True,
                         with_vectors=False
                     )
+                    self._last_applied_filter = priority_filter
+                    self._last_narrowed = True
 
                 return [_format_hit(hit) for hit in search_result.points]
 
             elif self.qdrant_mode.lower() == 'gradio':
                 logger.debug(f"Sync Gradio Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
+                self._last_applied_filter = filters
+                self._last_narrowed = False
                 result = client.predict(
                     query_vector_json=json.dumps(query_vector),
                     collection_name=self.qdrant_collection,
@@ -206,6 +216,8 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                     if isinstance(result, dict) and "error" in result:
                         logger.error(f"Gradio wrapper error on priority retry: {result.get('message', result)}")
                         return []
+                    self._last_applied_filter = priority_filter
+                    self._last_narrowed = True
 
                 return result
         
@@ -222,6 +234,8 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
 
             if self.qdrant_mode.lower() == 'native':
                 logger.debug(f"Async Native Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
+                self._last_applied_filter = filters
+                self._last_narrowed = False
 
                 search_result = await client.query_points(
                     collection_name=self.qdrant_collection,
@@ -248,11 +262,15 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                         with_payload=True,
                         with_vectors=False
                     )
+                    self._last_applied_filter = priority_filter
+                    self._last_narrowed = True
 
                 return [_format_hit(hit) for hit in search_result.points]
 
             elif self.qdrant_mode.lower() == 'gradio':
                 logger.debug(f"Async Gradio Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
+                self._last_applied_filter = filters
+                self._last_narrowed = False
                 loop = asyncio.get_running_loop()
 
                 # Use run_in_executor to make the synchronous .predict() awaitable
@@ -291,6 +309,8 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                     if isinstance(result, dict) and "error" in result:
                         logger.error(f"Gradio wrapper error on priority retry: {result.get('message', result)}")
                         return []
+                    self._last_applied_filter = priority_filter
+                    self._last_narrowed = True
 
                 return result
         except Exception as e:

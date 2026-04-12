@@ -11,6 +11,18 @@ from components.utils import build_conversation_context
 logger = logging.getLogger(__name__)
 
 
+def _build_filters_footnote(filters: Dict, narrowed: bool) -> str:
+    """Build a subtle italic footnote showing which filters were applied during retrieval."""
+    parts = [
+        f"{k}: {', '.join(v) if isinstance(v, list) else v}"
+        for k, v in filters.items()
+    ]
+    base = "*🔍 Searched within: " + " · ".join(parts)
+    if narrowed:
+        base += " *(narrowed — combined filter returned no results)*"
+    return base + "*"
+
+
 async def process_query_streaming(
     compiled_graph,
     query: str,
@@ -44,6 +56,8 @@ async def process_query_streaming(
         async for output in compiled_graph.astream(initial_state, stream_mode="custom"):
             if output.get("event") == "data":
                 yield {"type": "data", "content": output["data"]}
+            elif output.get("event") == "filters_applied":
+                yield {"type": "filters_applied", "content": output["data"]}
             elif output.get("event") == "final_answer":
                 # Handle final_answer event with webSources
                 sources = output["data"].get("webSources", [])
@@ -110,6 +124,7 @@ async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: in
 
         full_response = ""
         sources_collected = None
+        filters_footnote = None
 
         async for result in process_query_streaming(
             compiled_graph=compiled_graph,
@@ -125,9 +140,15 @@ async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: in
                 if result_type == "data":
                     full_response += content
                     yield content
+                elif result_type == "filters_applied":
+                    filters_footnote = _build_filters_footnote(
+                        content.get("filters", {}), content.get("narrowed", False)
+                    )
                 elif result_type == "sources":
                     sources_collected = content
                 elif result_type == "end":
+                    if filters_footnote:
+                        yield f"\n\n---\n{filters_footnote}"
                     if sources_collected:
                         # Send sources as markdown with doc:// URLs for ChatUI to parse
                         sources_text = "\n\n**Sources:**\n"
@@ -220,6 +241,7 @@ async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_char
                     return
 
         sources_collected = None
+        filters_footnote = None
 
         async for result in process_query_streaming(
             compiled_graph=compiled_graph,
@@ -236,9 +258,15 @@ async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_char
 
                 if result_type == "data":
                     yield content
+                elif result_type == "filters_applied":
+                    filters_footnote = _build_filters_footnote(
+                        content.get("filters", {}), content.get("narrowed", False)
+                    )
                 elif result_type == "sources":
                     sources_collected = content
                 elif result_type == "end":
+                    if filters_footnote:
+                        yield f"\n\n---\n{filters_footnote}"
                     if sources_collected:
                         # Send sources as markdown with doc:// URLs for ChatUI to parse
                         sources_text = "\n\n**Sources:**\n"
