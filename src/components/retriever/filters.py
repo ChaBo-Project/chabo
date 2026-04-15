@@ -73,5 +73,4 @@ FILTER_VALUES: dict[str, list] = {'crop_type': ['arugula',
   'Cultivation and producing Sunflower',
   'Detailed cultivation information for Wheat',
   'Cultivation and producing Wheat in New reclaimed lands',
-  'Cultivation and producing Wheat  in old lands',
-  'nan']}
+  'Cultivation and producing Wheat  in old lands']}
