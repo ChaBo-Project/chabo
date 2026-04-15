@@ -1,0 +1,48 @@
+ChaBo
+Copyright 2025 ChaBo contributors
+
+This product is licensed under the Apache License, Version 2.0 (the "License");
+you may not use this product except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+------------------------------------------------------------------------------
+This product includes and/or depends on software developed by third parties.
+The following attributions are provided in accordance with the Apache License,
+Version 2.0, Section 4(d), and the attribution clauses of the BSD and MIT
+licenses.
+
+Apache License 2.0 components:
+  - requests (https://github.com/psf/requests)
+      Copyright 2019 Kenneth Reitz
+  - qdrant-client (https://github.com/qdrant/qdrant-client)
+      Copyright Qdrant
+  - gradio-client (https://github.com/gradio-app/gradio)
+      Copyright Gradio authors
+  - chat-ui (https://github.com/huggingface/chat-ui)
+      Copyright Hugging Face (redistributed via Docker image in docker-compose/)
+
+BSD-3-Clause components:
+  - uvicorn, httpx, python-dotenv, PyPDF2, pandas
+
+MIT-licensed components:
+  - fastapi, langserve, langchain-core, langchain-openai, langchain-anthropic,
+    langchain-cohere, langchain-huggingface, langchain-text-splitters,
+    langgraph, pydantic, python-docx
+
+PSF-licensed components:
+  - typing-extensions
+
+Full license texts and copyright notices for all transitive dependencies are
+available via `pip-licenses` against the pinned requirements.txt. Generate a
+complete third-party license inventory with:
+
+    pip install pip-licenses
+    pip-licenses --format=markdown --with-license-file --with-notice-file \
+        > THIRD_PARTY_LICENSES.md
+
+Third-party model weights and remote services (e.g., Meta Llama-3, BAAI/bge-*,
+Anthropic, OpenAI, Cohere, Hugging Face Inference) are governed by their own
+licenses or terms of service and are not redistributed as part of this source
+tree.
