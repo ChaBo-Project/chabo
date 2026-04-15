@@ -17,10 +17,10 @@ def _build_filters_footnote(filters: Dict, narrowed: bool) -> str:
         f"{k}: {', '.join(v) if isinstance(v, list) else v}"
         for k, v in filters.items()
     ]
-    base = "*🔍 Searched within: " + " · ".join(parts)
+    base = "🔍 Searched within: " + " · ".join(parts)
     if narrowed:
-        base += " *(narrowed — combined filter returned no results)*"
-    return base + "*"
+        base += " (narrowed — combined filter returned no results)"
+    return "*" + base + "*"
 
 
 async def process_query_streaming(
