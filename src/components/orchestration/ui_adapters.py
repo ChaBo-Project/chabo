@@ -4,22 +4,32 @@ ChatUI Adapters for LangGraph Workflow Streaming
 import logging
 import asyncio
 import json
-from typing import AsyncGenerator, Dict, Any
+from typing import AsyncGenerator, Dict, Any, Optional
 
 from components.utils import build_conversation_context
 
 logger = logging.getLogger(__name__)
 
 
+def _build_filters_footnote(filters: Dict, narrowed: bool) -> str:
+    """Build a subtle italic footnote showing which filters were applied during retrieval."""
+    parts = [
+        f"{k}: {', '.join(v) if isinstance(v, list) else v}"
+        for k, v in filters.items()
+    ]
+    base = "🔍 Searched within: " + " · ".join(parts)
+    if narrowed:
+        base += " (narrowed — combined filter returned no results)"
+    return "*" + base + "*"
+
+
 async def process_query_streaming(
     compiled_graph,
     query: str,
     file_upload=None,
-    reports_filter: str = "",
-    sources_filter: str = "",
-    subtype_filter: str = "",
-    year_filter: str = "",
+    metadata_filters: Optional[Dict[str, Any]] = None,
     conversation_context: str = None,
+    user_messages_history: str = None,
     file_content: bytes = None,
     filename: str = None
 ):
@@ -28,25 +38,13 @@ async def process_query_streaming(
 
     COPIED FROM ORIGINAL ORCHESTRATOR. TO BE REPLACED WITH AGENTIC WORFLOW
     """
-    # Build metadata filters from filter parameters
-    metadata_filters = None
-    if any([reports_filter, sources_filter, subtype_filter, year_filter]):
-        metadata_filters = {}
-        if reports_filter:
-            metadata_filters["reports"] = reports_filter
-        if sources_filter:
-            metadata_filters["sources"] = sources_filter
-        if subtype_filter:
-            metadata_filters["subtype"] = subtype_filter
-        if year_filter:
-            metadata_filters["year"] = year_filter
-
     initial_state = {
         "query": query,
         "metadata": {"session_type": "chatui"},
         "raw_documents": [],
         "conversation_context": conversation_context,
-        "metadata_filters": metadata_filters
+        "metadata_filters": metadata_filters,
+        "user_messages_history": user_messages_history,
     }
 
     # Add file content if present
@@ -58,6 +56,8 @@ async def process_query_streaming(
         async for output in compiled_graph.astream(initial_state, stream_mode="custom"):
             if output.get("event") == "data":
                 yield {"type": "data", "content": output["data"]}
+            elif output.get("event") == "filters_applied":
+                yield {"type": "filters_applied", "content": output["data"]}
             elif output.get("event") == "final_answer":
                 # Handle final_answer event with webSources
                 sources = output["data"].get("webSources", [])
@@ -115,18 +115,23 @@ async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: in
 
         # Build conversation context for generation (last N turns)
         conversation_context = build_conversation_context(messages, max_turns=max_turns, max_chars=max_chars)
+
+        # User-only history for filter extraction (no assistant responses / retrieved doc content)
+        user_only = [msg for msg in messages if msg.role == 'user']
+        user_messages_history = "\n".join(
+            f"USER: {msg.content}" for msg in user_only[-max_turns:]
+        ) if user_only else None
+
         full_response = ""
         sources_collected = None
+        filters_footnote = None
 
         async for result in process_query_streaming(
             compiled_graph=compiled_graph,
             query=query,
             file_upload=None,
-            reports_filter="",
-            sources_filter="",
-            subtype_filter="",
-            year_filter="",
-            conversation_context=conversation_context
+            conversation_context=conversation_context,
+            user_messages_history=user_messages_history,
         ):
             if isinstance(result, dict):
                 result_type = result.get("type", "data")
@@ -135,9 +140,15 @@ async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: in
                 if result_type == "data":
                     full_response += content
                     yield content
+                elif result_type == "filters_applied":
+                    filters_footnote = _build_filters_footnote(
+                        content.get("filters", {}), content.get("narrowed", False)
+                    )
                 elif result_type == "sources":
                     sources_collected = content
                 elif result_type == "end":
+                    if filters_footnote:
+                        yield f"\n\n---\n{filters_footnote}"
                     if sources_collected:
                         # Send sources as markdown with doc:// URLs for ChatUI to parse
                         sources_text = "\n\n**Sources:**\n"
@@ -202,8 +213,15 @@ async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_char
             logger.info(f"Processing query with file: {query[:20]}... | Conversation: {msg_metadata}")
 
             conversation_context = build_conversation_context(messages, max_turns=max_turns, max_chars=max_chars)
+
+            # User-only history for filter extraction (no assistant responses / retrieved doc content)
+            user_only = [msg for msg in messages if msg.role == 'user']
+            user_messages_history = "\n".join(
+                f"USER: {msg.content}" for msg in user_only[-max_turns:]
+            ) if user_only else None
         else:
             query = text_value
+            user_messages_history = None
 
         file_content = None
         filename = None
@@ -223,16 +241,14 @@ async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_char
                     return
 
         sources_collected = None
+        filters_footnote = None
 
         async for result in process_query_streaming(
             compiled_graph=compiled_graph,
             query=query,
             file_upload=None,
-            reports_filter="",
-            sources_filter="",
-            subtype_filter="",
-            year_filter="",
             conversation_context=conversation_context,
+            user_messages_history=user_messages_history,
             file_content=file_content,
             filename=filename
         ):
@@ -242,9 +258,15 @@ async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_char
 
                 if result_type == "data":
                     yield content
+                elif result_type == "filters_applied":
+                    filters_footnote = _build_filters_footnote(
+                        content.get("filters", {}), content.get("narrowed", False)
+                    )
                 elif result_type == "sources":
                     sources_collected = content
                 elif result_type == "end":
+                    if filters_footnote:
+                        yield f"\n\n---\n{filters_footnote}"
                     if sources_collected:
                         # Send sources as markdown with doc:// URLs for ChatUI to parse
                         sources_text = "\n\n**Sources:**\n"

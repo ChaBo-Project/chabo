@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from test_components import (
     check_qdrant, check_embedding, check_reranker,
-    test_retriever_unit, run_full_pipeline_test
+    test_retriever_unit, run_full_pipeline_test, test_metadata_filters
 )
 
 
@@ -75,6 +75,9 @@ async def main():
 
         pipeline_result = await run_full_pipeline_test(SAMPLE_QUERY, retriever, generator)
         results["RAG Pipeline"] = pipeline_result["success"]
+
+        filter_result = await test_metadata_filters(retriever)
+        results["Metadata Filters"] = filter_result["success"]
 
     # --- Summary ---
     logger.info("\n--- HEALTH CHECK SUMMARY ---")

@@ -1,10 +1,11 @@
 import os
+import json
 import configparser
 import logging
 import asyncio
 logger = logging.getLogger(__name__)
 
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Union, Optional
 from pydantic import Field
 from qdrant_client import QdrantClient, AsyncQdrantClient
 from gradio_client import Client as GradioClient
@@ -12,6 +13,41 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from ..utils import getconfig, get_config_value, _call_hf_endpoint, _acall_hf_endpoint
 from qdrant_client.http import models as rest
+
+
+def _build_qdrant_filter(filters: Dict[str, Any]) -> Optional[rest.Filter]:
+    """
+    Convert a plain {field: value} dict into a Qdrant rest.Filter.
+    Payload fields are nested under 'metadata', so keys become 'metadata.<field>'.
+    - list value   → MatchAny  (match any element in list)
+    - scalar value → MatchValue (exact match)
+    All conditions ANDed via must[]. Returns None if filters is empty or None.
+    """
+    if not filters:
+        return None
+
+    must_conditions = []
+    for field, value in filters.items():
+        qdrant_key = f"metadata.{field}"
+        if isinstance(value, list):
+            must_conditions.append(
+                rest.FieldCondition(key=qdrant_key, match=rest.MatchAny(any=value))
+            )
+        else:
+            must_conditions.append(
+                rest.FieldCondition(key=qdrant_key, match=rest.MatchValue(value=value))
+            )
+
+    return rest.Filter(must=must_conditions)
+
+
+def _format_hit(hit) -> Dict[str, Any]:
+    """Format a Qdrant ScoredPoint into the standard retriever result dict."""
+    return {
+        "answer": hit.payload.get("text", hit.payload.get("page_content", "")),
+        "answer_metadata": hit.payload.get("metadata", {}),
+        "score": hit.score
+    }
 
 
 # --- THE MAIN RETRIEVER ORCHESTRATOR CLASS  ---
@@ -101,91 +137,184 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         return self._get_qdrant_client()
     
     # --- Qdrant Synchronous Search Helper (Handles Mode Switching) ---
-    def _search_qdrant(self, query_vector: List[float], filters: Dict = None) -> List[Dict[str, Any]]:
+    def _search_qdrant(self, query_vector: List[float], filters: Dict = None) -> tuple:
         """Performs the synchronous Qdrant search. If mode is gradio expects
-         the api_endpoint = 'query_points' similar to native mode"""
-        
+         the api_endpoint = 'query_points' similar to native mode.
+         Returns (results, applied_filter, narrowed)."""
+
         try:
 
             client = self._get_qdrant_client()
-            
+
             if self.qdrant_mode.lower() == 'native':
                 logger.debug(f"Sync Native Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
+                applied_filter = filters
+                narrowed = False
                 search_result = client.query_points(
                     collection_name=self.qdrant_collection,
                     query=query_vector,
-                    query_filter=filters,
+                    query_filter=_build_qdrant_filter(filters),
                     limit=self.initial_k,
                     with_payload=True,
                     with_vectors=False
                 )
-                # In the native mode qdrant_client can consume the string output from and 
-                # reformualte the Scoredpoints format, but gradio cannot handle so therefore
-                # in Gradio version the wrapper reformats the outout in desired format and sits in 
-                # gradio space itself.
-                
-                return [{
-                "answer": hit.payload.get("text", hit.payload.get("page_content", "")), 
-                "answer_metadata": hit.payload.get("metadata", {}),
-                "score": hit.score
-                } for hit in search_result.points]
+
+                # Safeguard: if AND filter returns 0 results and multiple fields were applied,
+                # retry with the priority field only (first key in filters dict).
+                if not search_result.points and filters and len(filters) > 1:
+                    priority_field = next(iter(filters))
+                    priority_filter = {priority_field: filters[priority_field]}
+                    logger.info(
+                        f"AND filter returned 0 results, retrying with priority field only: {priority_filter}"
+                    )
+                    search_result = client.query_points(
+                        collection_name=self.qdrant_collection,
+                        query=query_vector,
+                        query_filter=_build_qdrant_filter(priority_filter),
+                        limit=self.initial_k,
+                        with_payload=True,
+                        with_vectors=False
+                    )
+                    applied_filter = priority_filter
+                    narrowed = True
+
+                return [_format_hit(hit) for hit in search_result.points], applied_filter, narrowed
 
             elif self.qdrant_mode.lower() == 'gradio':
                 logger.debug(f"Sync Gradio Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
-                return client.predict(
-                    query_vector_json=query_vector, 
+                applied_filter = filters
+                narrowed = False
+                result = client.predict(
+                    query_vector_json=json.dumps(query_vector),
                     collection_name=self.qdrant_collection,
                     top_k=self.initial_k,
-                    #query_filter=filters,
-                    api_name="/query_points" 
+                    query_filter=json.dumps(filters) if filters else None,
+                    api_name="/query_points"
                 )
-        
+                if isinstance(result, dict) and "error" in result:
+                    logger.error(f"Gradio wrapper error: {result.get('message', result)}")
+                    return [], None, False
+
+                # Safeguard: if AND filter returns 0 results and multiple fields were applied,
+                # retry with the priority field only (first key in filters dict).
+                if not result and filters and len(filters) > 1:
+                    priority_field = next(iter(filters))
+                    priority_filter = {priority_field: filters[priority_field]}
+                    logger.info(
+                        f"AND filter returned 0 results (Gradio), retrying with priority field only: {priority_filter}"
+                    )
+                    result = client.predict(
+                        query_vector_json=json.dumps(query_vector),
+                        collection_name=self.qdrant_collection,
+                        top_k=self.initial_k,
+                        query_filter=json.dumps(priority_filter),
+                        api_name="/query_points"
+                    )
+                    if isinstance(result, dict) and "error" in result:
+                        logger.error(f"Gradio wrapper error on priority retry: {result.get('message', result)}")
+                        return [], None, False
+                    applied_filter = priority_filter
+                    narrowed = True
+
+                return result, applied_filter, narrowed
+
         except Exception as e:
             logger.error(f"Search failed at {self.qdrant_url}. Error: {e}")
-            return []
+            return [], None, False
     
     # --- Qdrant Asynchronous search ---
-    async def _asearch_qdrant(self, query_vector: List[float], filters: Dict = None) -> List[Dict[str, Any]]:
+    async def _asearch_qdrant(self, query_vector: List[float], filters: Dict = None) -> tuple:
         """Performs the asynchronous Qdrant search. If mode is gradio expects
-         the api_endpoint = 'query_points' similar to native mode"""
+         the api_endpoint = 'query_points' similar to native mode.
+         Returns (results, applied_filter, narrowed)."""
         try:
             client = await self._aget_qdrant_client()
 
             if self.qdrant_mode.lower() == 'native':
                 logger.debug(f"Async Native Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
+                applied_filter = filters
+                narrowed = False
 
                 search_result = await client.query_points(
                     collection_name=self.qdrant_collection,
                     query=query_vector,
-                    query_filter=filters,
+                    query_filter=_build_qdrant_filter(filters),
                     limit=self.initial_k,
                     with_payload=True,
                     with_vectors=False
                 )
-                
-                return [{
-                "answer": hit.payload.get("text", hit.payload.get("page_content", "")), 
-                "answer_metadata": hit.payload.get("metadata", {}),
-                "score": hit.score
-                } for hit in search_result.points]
+
+                # Safeguard: if AND filter returns 0 results and multiple fields were applied,
+                # retry with the priority field only (first key in filters dict).
+                if not search_result.points and filters and len(filters) > 1:
+                    priority_field = next(iter(filters))
+                    priority_filter = {priority_field: filters[priority_field]}
+                    logger.info(
+                        f"AND filter returned 0 results, retrying with priority field only: {priority_filter}"
+                    )
+                    search_result = await client.query_points(
+                        collection_name=self.qdrant_collection,
+                        query=query_vector,
+                        query_filter=_build_qdrant_filter(priority_filter),
+                        limit=self.initial_k,
+                        with_payload=True,
+                        with_vectors=False
+                    )
+                    applied_filter = priority_filter
+                    narrowed = True
+
+                return [_format_hit(hit) for hit in search_result.points], applied_filter, narrowed
 
             elif self.qdrant_mode.lower() == 'gradio':
                 logger.debug(f"Async Gradio Qdrant search: collection={self.qdrant_collection}, k={self.initial_k}")
+                applied_filter = filters
+                narrowed = False
                 loop = asyncio.get_running_loop()
-            
+
                 # Use run_in_executor to make the synchronous .predict() awaitable
-                return await loop.run_in_executor(
-                    None, 
+                result = await loop.run_in_executor(
+                    None,
                     lambda: client.predict(
-                        query_vector_json=query_vector, 
+                        query_vector_json=json.dumps(query_vector),
                         collection_name=self.qdrant_collection,
                         top_k=self.initial_k,
-                        api_name="/query_points" 
+                        query_filter=json.dumps(filters) if filters else None,
+                        api_name="/query_points"
                     )
                 )
+                if isinstance(result, dict) and "error" in result:
+                    logger.error(f"Gradio wrapper error: {result.get('message', result)}")
+                    return [], None, False
+
+                # Safeguard: if AND filter returns 0 results and multiple fields were applied,
+                # retry with the priority field only (first key in filters dict).
+                if not result and filters and len(filters) > 1:
+                    priority_field = next(iter(filters))
+                    priority_filter = {priority_field: filters[priority_field]}
+                    logger.info(
+                        f"AND filter returned 0 results (Gradio), retrying with priority field only: {priority_filter}"
+                    )
+                    result = await loop.run_in_executor(
+                        None,
+                        lambda: client.predict(
+                            query_vector_json=json.dumps(query_vector),
+                            collection_name=self.qdrant_collection,
+                            top_k=self.initial_k,
+                            query_filter=json.dumps(priority_filter),
+                            api_name="/query_points"
+                        )
+                    )
+                    if isinstance(result, dict) and "error" in result:
+                        logger.error(f"Gradio wrapper error on priority retry: {result.get('message', result)}")
+                        return [], None, False
+                    applied_filter = priority_filter
+                    narrowed = True
+
+                return result, applied_filter, narrowed
+
         except Exception as e:
             logger.error(f"Search failed at {self.qdrant_url}. Error: {e}")
-            return []
+            return [], None, False
         
         
     # --- Core Retrieval Orchestration (LangChain Required Method) ---
@@ -210,7 +339,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
         
                 
         # B. Search Qdrant (Dynamic Call)
-        candidate_results = self._search_qdrant(query_vector, filters=kwargs.get("filters"))
+        candidate_results, _, _ = self._search_qdrant(query_vector, filters=kwargs.get("filters"))
         logger.debug(f"Candidate Results {candidate_results}")
         if not candidate_results:
             logger.info(f"No candidates found for query: {query[:50]}...")
@@ -281,7 +410,7 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
 
 
         # B. Search Qdrant (Dynamic Async Call)
-        candidate_results = await self._asearch_qdrant(query_vector, filters=kwargs.get("filters")) 
+        candidate_results, applied_filter, narrowed = await self._asearch_qdrant(query_vector, filters=kwargs.get("filters"))
         logger.debug(f"Candidate Results {candidate_results}")
 
         if not candidate_results:
@@ -330,12 +459,18 @@ class ChaBoHFEndpointRetriever(BaseRetriever):
                 metadata = original_doc_data.get("answer_metadata", {}).copy()
                 metadata['retriever_score'] = original_doc_data.get("score")
                 metadata['rerank_score'] = "FALLBACK"
-                
+
                 documents.append(Document(
-                    page_content=original_doc_data.get("answer", ""), 
+                    page_content=original_doc_data.get("answer", ""),
                     metadata=metadata
                 ))
-            
+
+        # Inject filter info into first doc so it travels with ainvoke result to retrieve_node.
+        # retrieve_node pops these keys and writes them into graph state (per-request, not shared).
+        if documents and applied_filter is not None:
+            documents[0].metadata["_applied_filter"] = applied_filter
+            documents[0].metadata["_narrowed"] = narrowed
+
         return documents
     
 

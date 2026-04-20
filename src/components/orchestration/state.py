@@ -22,6 +22,9 @@ class GraphState(TypedDict, total=False):
     file_type: Optional[str]
     workflow_type: Optional[str]  # 'standard' or 'geojson_direct'
     metadata_filters: Optional[Dict[str, Any]]
+    user_messages_history: Optional[str]  # User-turn-only history for filter extraction (no assistant responses)
+    applied_filters: Optional[Dict[str, Any]]  # Actual filters used after AND-safeguard fallback
+    filters_narrowed: Optional[bool]  # True if AND safeguard fired and fell back to priority field
 
 class Message(BaseModel):
     """Single message in conversation history"""

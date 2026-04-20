@@ -5,21 +5,23 @@ A RAG (Retrieval-Augmented Generation) orchestrator API built with FastAPI, Lang
 ## Architecture
 
 ```
-┌─────────────┐     ┌─────────────────────────────────────────────────┐
-│   ChatUI    │────▶│                    ChaBo                        │
-│  (Frontend) │     │  ┌─────────┐   ┌─────────┐   ┌───────────────┐  │
-└─────────────┘     │  │ Embed   │──▶│ Search  │──▶│   Rerank      │  │
-                    │  │ (HF)    │   │ (Qdrant)│   │   (HF)        │  │
-                    │  └─────────┘   └─────────┘   └───────┬───────┘  │
-                    │                                      │          │
-                    │                              ┌───────▼───────┐  │
-                    │                              │   Generate    │  │
-                    │                              │ (Multi-LLM)   │  │
-                    │                              └───────────────┘  │
-                    └─────────────────────────────────────────────────┘
+┌─────────────┐     ┌────────────────────────────────────────────────────────┐
+│   ChatUI    │────▶│                        ChaBo                           │
+│  (Frontend) │     │  ┌─────────┐   ┌──────────────┐   ┌───────────────┐   │
+└─────────────┘     │  │ Embed   │──▶│ Smart Search │──▶│    Rerank     │   │
+                    │  │ (HF)    │   │   (Qdrant)   │   │    (HF)       │   │
+                    │  └─────────┘   └──────▲───────┘   └───────┬───────┘   │
+                    │                       │                   │           │
+                    │               ┌───────┴──────┐   ┌───────▼────────┐   │
+                    │               │   Extract    │   │    Generate    │   │
+                    │               │  Filters*    │   │  (Multi-LLM)  │   │
+                    │               └──────────────┘   └────────────────┘   │
+                    └────────────────────────────────────────────────────────┘
 ```
 
-**Pipeline:** Query → Embed → Vector Search → Rerank → Generate (with citations)
+**Pipeline:** Query → Embed → Extract Filters* → Smart Search → Rerank → Generate (with citations)
+
+> **Smart Search** applies LLM-extracted metadata filters to narrow Qdrant results before reranking. Filters are pulled from the current query, with conversation history as fallback. When filters are applied, ChatUI displays a footnote at the end of each response (e.g. *🔍 Searched within: category: news · lang: en*) — including a note if the AND-safeguard fired and narrowed the filter to the priority field. `*` Activated only when `filterable_fields` is configured under `[metadata_filters]` in `params.cfg` — omit or leave empty for standard unfiltered search.
 
 **Supported LLM Providers:** HuggingFace, OpenAI, Anthropic, Cohere, Azure OpenAI
 
@@ -58,6 +60,9 @@ INFERENCE_PROVIDER = ABC
 ORGANIZATION = XYZ
 CONTEXT_META_FIELDS = filename,project_id,document_source
 TITLE_META_FIELDS = filename,page
+
+[metadata_filters]
+filterable_fields = project_id:str,year:int,tags:list
 ```
 
 Pass API keys as environment variables at runtime:
@@ -237,8 +242,21 @@ python tests/health/run_all.py
 | 1 | Reranker endpoint | Returns scores |
 | 2 | Retriever unit | Full retrieval + reranking returns ranked documents |
 | 2 | RAG pipeline | End-to-end retrieval → streaming generation with a sample query |
+| 2 | Metadata filters | Three sub-tests against live Qdrant: single-field filter returns docs; valid multi-field AND returns docs; impossible AND combination triggers the priority-field safeguard and retries with the first `filterable_fields` entry only |
 
 Step 2 (component checks) only runs if all Step 1 connectivity checks pass. Logs are written to `tests/health/logs/` with a timestamp for each run.
+
+> **Note — Metadata Filters check:** requires `filterable_fields` to be configured in `params.cfg` and the Qdrant collection to have the corresponding payload fields stored as nested dicts (not JSON strings).
+>
+> The three sub-tests are hardcoded to a sample corpus — **you must adapt them to your own collection** before running. Open `tests/health/test_components.py` and update the queries and filter values inside `test_metadata_filters()`:
+>
+> | Sub-test | What to change | Example (agriculture corpus) |
+> |----------|---------------|------------------------------|
+> | 1 — single field | Query + one valid field/value | `filters={"crop_type": ["wheat"]}` |
+> | 2 — valid AND | Query + two fields that co-exist in your data | `filters={"crop_type": ["maize"], "title": "Maize cultivation in the old and new lands"}` |
+> | 3 — safeguard | Query + an impossible combination (valid value for field 1, non-existent value for field 2) so AND returns 0 and the retry fires | `filters={"crop_type": ["wheat"], "title": "Cultivation and producing Maize"}` |
+>
+> The priority field (used in the safeguard retry) is always the **first key in `filterable_fields`** in `params.cfg`.
 
 ### Running individual scripts
 
@@ -301,16 +319,39 @@ source chabo_env/bin/activate
 
 ### Define your test questions
 
-Edit `tests/eval/test_questions.py` to add your evaluation questions.
+Edit `tests/eval/test_questions.py` to add your evaluation questions. Questions are organised into three subsets:
 
-These should be realistic queries representative of what actual users ask — curated with
-knowledge of your corpus. The examples below assume an **agriculture knowledge base**;
-replace them with questions relevant to your own domain:
+- **`standalone_questions`** — each query explicitly contains a filterable value; evaluated with no history
+- **`history_blocks`** — conversation sequences where later turns rely on filter carry-forward; only the last turn per block is evaluated
+- **`safeguard_questions`** — contradictory or unlikely field combinations that should trigger the AND-safeguard fallback
+
+Each entry includes an `expected_filters` field used for ground truth filter checking (see [Filter Ground Truth Checking](#filter-ground-truth-checking) below). Set it to the filter dict you expect the LLM to extract, or `None` if no filter is expected.
+
+These should be realistic queries representative of what actual users ask — curated with knowledge of your corpus. The examples below assume an **agriculture knowledge base**; replace them with questions and filter values relevant to your own domain:
 
 ```python
-questions = [
-    "What irrigation method is recommended for sugarcane on new land?",
-    "How do I treat fungal disease in strawberry crops?",
+standalone_questions = [
+    {
+        "question": "What irrigation method is recommended for sugarcane on new land?",
+        "expected_filters": {"crop": "sugarcane"},
+    },
+]
+
+history_blocks = [
+    {
+        "turns": [
+            "I'm looking for information about wheat crop management.",
+            "What are the recommended pesticide applications?",
+        ],
+        "expected_filters": {"crop": "wheat"},
+    },
+]
+
+safeguard_questions = [
+    {
+        "question": "What does the maize report on wheat fertilisation say?",
+        "expected_filters": None,
+    },
 ]
 ```
 
@@ -320,14 +361,20 @@ questions = [
 
 ### Run evaluation
 
-Pass the `--mode` flag to select which stage to run:
+Pass the `--mode` flag to select which stage to run, and `--filters` to enable metadata filter extraction:
 
 ```bash
 # Step 1: Run retrieval and save results
 python tests/eval/eval.py --mode retrieval
 
+# Step 1 with metadata filter extraction and ground truth checking
+python tests/eval/eval.py --mode retrieval --filters
+
 # Step 2: Judge retrieved results with LLM (resumes from checkpoint if interrupted)
 python tests/eval/eval.py --mode batch
+
+# Step 2 with filters (judges the filtered retrieval results)
+python tests/eval/eval.py --mode batch --filters
 
 # Quick sample run (first 2 questions only, useful for testing)
 python tests/eval/eval.py --mode sample
@@ -335,7 +382,26 @@ python tests/eval/eval.py --mode sample
 
 `--mode retrieval` is the default if no flag is provided.
 
-Results are saved to `tests/eval/results/` (gitignored).
+Results are saved to `tests/eval/results/` (gitignored). The `--filters` flag appends `_filtered` to all output filenames — compare `judged_eval_report.json` vs `judged_eval_report_filtered.json` to measure the impact of filtering on retrieval quality.
+
+### Filter Ground Truth Checking
+
+When running with `--filters`, the extracted filters are automatically compared against `expected_filters` from `test_questions.py`. Two files are produced:
+
+- **`retrieval_eval_results_filtered.json`** — full retrieval results, each entry includes a `filter_check` field with `expected`, `extracted`, and `result`
+- **`filter_check_report_filtered.json`** — a dedicated report for at-a-glance inspection
+
+Possible `result` values:
+
+| Result | Meaning |
+|--------|---------|
+| `correct` | Extraction matches expected exactly, or no filter expected and none extracted |
+| `partial_match` | At least one field matches, others wrong or missing |
+| `mismatch` | Filter was extracted but no fields match expected |
+| `no_filter` | A filter was expected but none was extracted |
+| `spurious_filter` | No filter was expected but one was extracted |
+
+A console summary is also printed at the end of each `--mode retrieval --filters` run.
 
 ---
 

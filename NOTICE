@@ -1,0 +1,50 @@
+ChaBo — RAG orchestrator API
+Copyright 2025-present ChaBo contributors
+
+This product is licensed under the Apache License, Version 2.0 (the "License");
+you may not use this product except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+------------------------------------------------------------------------------
+This product includes and/or depends on software developed by third parties.
+The following attributions are provided in accordance with the Apache License,
+Version 2.0, Section 4(d), and the attribution clauses of the BSD, MIT, and
+other permissive licenses.
+
+The full upstream license texts and copyright notices for each dependency are
+installed alongside the package itself in `site-packages/` — both in any local
+`pip install -r requirements.txt` environment and inside the distributed
+Docker image. The summary below is informational.
+
+Apache License 2.0 components:
+  - requests              Copyright Kenneth Reitz and contributors
+  - qdrant-client         Copyright Qdrant and contributors
+  - gradio                Copyright Gradio authors and contributors
+  - gradio-client         Copyright Gradio authors and contributors
+  - huggingface_hub       Copyright Hugging Face and contributors
+  - python-multipart      Copyright Andrew Dunham and contributors
+  - pyarrow               Copyright Apache Software Foundation
+  - chat-ui               Copyright Hugging Face (redistributed via Docker
+                          image in docker-compose/)
+
+BSD-3-Clause components:
+  - uvicorn, httpx, python-dotenv, PyPDF2
+
+MIT-licensed components:
+  - fastapi, langserve, langchain, langchain-core, langchain-community,
+    langchain-openai, langchain-anthropic, langchain-cohere,
+    langchain-huggingface, langchain-text-splitters, langgraph, pydantic,
+    python-docx, cohere
+
+PSF-licensed components:
+  - typing-extensions
+
+Other permissive components:
+  - Pillow (HPND-Modified)
+
+Third-party model weights and remote services (e.g., Meta Llama-3, BAAI/bge-*,
+Anthropic, OpenAI, Cohere, Hugging Face Inference) are governed by their own
+licenses or terms of service and are not redistributed as part of this source
+tree.
