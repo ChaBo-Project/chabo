@@ -52,9 +52,14 @@ async def retrieve_node(
             **retriever_kwargs
         )
 
-        # Emit the actual filter used (post AND-safeguard) so adapters can display it
-        applied_filter = retriever._last_applied_filter
-        narrowed = retriever._last_narrowed
+        # Extract filter info injected by the retriever into the first doc's metadata.
+        # Using doc metadata (not retriever instance state) avoids race conditions under concurrent requests.
+        applied_filter = None
+        narrowed = False
+        if raw_documents:
+            applied_filter = raw_documents[0].metadata.pop("_applied_filter", None)
+            narrowed = raw_documents[0].metadata.pop("_narrowed", False)
+
         if applied_filter:
             writer({"event": "filters_applied", "data": {"filters": applied_filter, "narrowed": narrowed}})
 
