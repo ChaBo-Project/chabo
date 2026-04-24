@@ -63,7 +63,44 @@ TITLE_META_FIELDS = filename,page
 
 [metadata_filters]
 filterable_fields = project_id:str,year:int,tags:list
+
+[conversation_history]
+MAX_TURNS = 3
+MAX_CHARS = 8000
 ```
+
+#### Metadata Filters Setup
+
+Enabling `filterable_fields` requires two additional steps beyond `params.cfg`:
+
+**1. Update `src/components/retriever/filters.py`** with valid values for each declared field:
+
+```python
+FILTER_VALUES = {
+    "project_id": ["proj-001", "proj-002", "proj-003"],
+    "year": [2022, 2023, 2024],
+    "tags": ["report", "policy", "technical"],
+}
+```
+
+Every field listed in `filterable_fields` must have an entry here — ChaBo validates this at startup and will refuse to start if any field is missing. Values must exactly match what is stored in your Qdrant collection (the LLM will snap user queries to the closest match from this list).
+
+**2. Ensure your Qdrant payloads use the correct schema.** ChaBo expects filterable fields stored as a nested `metadata` object inside each point's payload:
+
+```json
+{
+  "text": "document content...",
+  "metadata": {
+    "project_id": "proj-001",
+    "year": 2023,
+    "tags": ["report", "policy"]
+  }
+}
+```
+
+Fields stored as top-level keys or as JSON strings will not be found by the filter. If you use `upload_parquet.py` for ingestion (see Data Upload below), this schema is handled automatically.
+
+> Omit or leave `filterable_fields` empty to run standard unfiltered search — no `filters.py` changes needed.
 
 Pass API keys as environment variables at runtime:
 
@@ -178,7 +215,24 @@ docker exec -it docker-compose_chabo_1 python src/components/ingestor/upload_par
     --vector_size 1024
 ```
 
-> **Note:** Use the same collection name as in your `params.cfg` and the correct vector dimension for your embedding model (e.g. 1024 for BGE-large, 768 for BGE-base).
+**Expected parquet schema** — the file must have two columns:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `vector` | list of float | Pre-computed embedding vector for this chunk |
+| `payload` | dict | Must contain `text` (string) and `metadata` (dict) |
+
+Each row becomes one Qdrant point with three components:
+
+```
+id      → auto-assigned as row index
+vector  → df.vector  (your pre-computed embedding)
+payload → { "text": "...", "metadata": { "field": "value", ... } }
+```
+
+The `metadata` dict inside `payload` is where filterable fields live (see Metadata Filters Setup above). The upload script handles collection creation automatically if it does not already exist.
+
+> **Note:** Use the same collection name as in your `params.cfg` and the correct vector dimension for your embedding model (e.g. 1024 for BGE-large, 768 for BGE-base). The `vector_size` must match when the collection is first created — it cannot be changed afterwards.
 
 #### Service URLs
 

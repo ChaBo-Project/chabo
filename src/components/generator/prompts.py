@@ -48,6 +48,61 @@ FOLLOW-UP QUESTIONS (OPTIONAL):
 - Keep it concise and directly related to the available context.
 """
 
+def build_filter_extraction_messages(
+    filterable_fields: dict,
+    filter_values: dict,
+    query: str,
+    user_messages_history: str
+) -> list:
+    """
+    Build [SystemMessage, HumanMessage] for LLM-based metadata filter extraction.
+
+    Separated from the node so prompt wording can be tuned without touching orchestration logic.
+    Called by extract_filters_node in nodes.py.
+    """
+    field_descriptions = []
+    for field, ftype in filterable_fields.items():
+        valid_vals = filter_values.get(field)
+        if ftype == "list":
+            base = f'"{field}" (list of strings, use JSON array)'
+        else:
+            base = f'"{field}" ({ftype})'
+        if valid_vals:
+            base += (
+                f" — valid values: {valid_vals}. "
+                "Pick the closest match from this list even if the user's wording differs slightly "
+                "(e.g. a plural, typo, or synonym). Do NOT use a value outside this list."
+            )
+        field_descriptions.append(base)
+    fields_desc = "\n".join(f"  - {d}" for d in field_descriptions)
+
+    system_msg = SystemMessage(content=(
+        "You are a metadata filter extraction assistant.\n"
+        f"Available filterable fields:\n{fields_desc}\n\n"
+        "Extraction rules:\n"
+        "- Examine EACH field INDEPENDENTLY — finding a value for one field must not cause you to skip others.\n"
+        "- For EACH field: first check the CURRENT QUERY. If a value is explicitly stated, use it.\n"
+        "- For EACH field: if not found in CURRENT QUERY, check PREVIOUS USER MESSAGES for a value "
+        "established in an earlier turn that still logically applies. If found, carry it forward.\n"
+        "- Only extract values EXPLICITLY stated by the user. Do NOT infer or assume.\n"
+        "- For fields with a valid values list, always pick the closest match from that list.\n"
+        "- For list-type fields, output a JSON array of strings.\n"
+        "- For str/int fields, output a single value.\n"
+        "- Return ONLY a valid JSON object, no markdown fences, no explanation.\n"
+        "- If no filters found for any field, return: {}\n"
+        f"- Only use keys from: {list(filterable_fields.keys())}"
+    ))
+
+    human_msg = HumanMessage(content=(
+        f"### CURRENT QUERY\n{query}\n\n"
+        f"### PREVIOUS USER MESSAGES\n{user_messages_history}\n\n"
+        "For each available field independently: check current query first, then previous messages "
+        "if not found in current query. Return all applicable filters as a JSON object."
+    ))
+
+    return [system_msg, human_msg]
+
+
 def build_messages(system_prompt: str, question: str, context: str, conversation_context: str = None) -> list:
     """
     Build messages for LLM call with optional conversation history.
