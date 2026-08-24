@@ -1,9 +1,10 @@
 """
 Document Ingestor Module
-Processes PDF and DOCX files, extracting text and chunking for RAG pipelines.
+Processes PDF, DOCX and plain-text (.txt/.md) files, extracting text and chunking for RAG
+pipelines.
 
 TO DO:
-- Possible support for additional file types (e.g., TXT, HTML)
+- Possible support for additional file types (e.g., HTML)
 - Review rate limits / context window size. The current inference endpoint is limited.
 - Different context strategies
 > Currently when a file is added, the query just goes to the retriever.
@@ -60,6 +61,24 @@ def extract_text_from_docx_bytes(file_content: bytes) -> Tuple[str, Dict[str, An
     except Exception as e:
         logger.error(f"DOCX extraction error: {str(e)}")
         raise Exception(f"Failed to extract text from DOCX: {str(e)}")
+
+
+def extract_text_from_plain_bytes(file_content: bytes) -> Tuple[str, Dict[str, Any]]:
+    """
+    Decode plain-text files (.txt / .md).
+
+    Exists mainly for the /v1/documents bridge:
+    frontends that run their own doc extraction (OpenWebUI, LibreChat) can pass
+    already-extracted text in lieu of original file. 
+    
+    UTF-8 first, latin-1 as a lossless byte-preserving fallback.
+    """
+    try:
+        text = file_content.decode("utf-8")
+    except UnicodeDecodeError:
+        text = file_content.decode("latin-1")
+        logger.warning("Plain-text file was not valid UTF-8; decoded as latin-1")
+    return text, {"total_chars": len(text)}
 
 
 def clean_and_chunk_text(text: str, config) -> str:
@@ -126,8 +145,12 @@ def process_document(file_content: bytes, filename: str) -> str:
             text, extraction_metadata = extract_text_from_pdf_bytes(file_content)
         elif file_extension == '.docx':
             text, extraction_metadata = extract_text_from_docx_bytes(file_content)
+        elif file_extension in ('.txt', '.md'):
+            text, extraction_metadata = extract_text_from_plain_bytes(file_content)
         else:
-            raise ValueError(f"Unsupported file type: {file_extension}")
+            raise ValueError(
+                f"Unsupported file type: {file_extension} (supported: .pdf, .docx, .txt, .md)"
+            )
 
         # Clean and chunk text
         context = clean_and_chunk_text(text, config)
@@ -139,6 +162,9 @@ def process_document(file_content: bytes, filename: str) -> str:
 
         return context
 
+    except ValueError:
+        logger.error(f"Document processing failed for {filename}: unsupported file type")
+        raise
     except Exception as e:
         logger.error(f"Document processing failed for {filename}: {str(e)}")
         raise Exception(f"Processing failed: {str(e)}")
