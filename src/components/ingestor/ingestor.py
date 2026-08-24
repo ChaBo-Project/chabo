@@ -67,9 +67,9 @@ def extract_text_from_plain_bytes(file_content: bytes) -> Tuple[str, Dict[str, A
     """
     Decode plain-text files (.txt / .md).
 
-    Exists mainly for the /v1/documents bridge:
-    frontends that run their own doc extraction (OpenWebUI, LibreChat) can pass
-    already-extracted text in lieu of original file. 
+    Kept for the ChatUI route, which can upload a .txt/.md directly. Frontends that run
+    their own extraction (OpenWebUI, LibreChat) send text on the chat request instead and
+    reach `process_text()` without passing through here.
     
     UTF-8 first, latin-1 as a lossless byte-preserving fallback.
     """
@@ -168,3 +168,23 @@ def process_document(file_content: bytes, filename: str) -> str:
     except Exception as e:
         logger.error(f"Document processing failed for {filename}: {str(e)}")
         raise Exception(f"Processing failed: {str(e)}")
+
+
+def process_text(text: str, filename: str = "attachment") -> str:
+    """
+    Chunk already-extracted text into the same context format as process_document().
+
+    Generic chat frontends extract text from files and pass raw text,
+    so this function applies cleaning, chunking, and the max_chunks cap only.
+
+    Args:
+        text: Plain text of the attachment
+        filename: Name of the file, used for logging and citation labelling only
+
+    Returns:
+        Formatted chunked context string ready for RAG pipeline
+    """
+    config = getconfig("params.cfg")
+    context = clean_and_chunk_text(text, config)
+    logger.info(f"Successfully processed text attachment {filename}: {len(text)} characters")
+    return context

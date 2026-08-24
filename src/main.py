@@ -17,7 +17,7 @@ from components.llm import build_llm_client
 from components.orchestration.workflow import build_workflow
 from components.orchestration.ui_adapters import chatui_adapter, chatui_file_adapter
 from components.orchestration.state import ChatUIInput, ChatUIFileInput
-from components.api import DocumentStore, build_documents_router, build_openai_router
+from components.api import build_openai_router
 from components.utils import getconfig, instance_config_dir, load_prompt_overrides
 from components.retriever.filters import FILTER_VALUES, validate_filterable_fields
 from components.rewriter.db_context import DBContext, load_db_context_from_instance
@@ -38,10 +38,6 @@ API_MODEL_NAME = config.get("api", "model_name", fallback="chabo").strip() or "c
 # Non-standard `citations` array on OpenAI-compatible responses
 # (sources are always rendered as markdown in the message body regardless).
 API_CITATIONS = config.getboolean("api", "openai_citations", fallback=True)
-# /v1/documents store limiters (because we temporaril store the uploaded doc up to TTL)
-DOCUMENT_TTL_SECONDS = config.getint("api", "document_ttl_seconds", fallback=3600)
-MAX_DOCUMENTS = config.getint("api", "max_documents", fallback=100)
-MAX_UPLOAD_BYTES = config.getint("api", "max_upload_bytes", fallback=25 * 1024 * 1024)
 
 # Parse filterable_fields: "field:type,field:type" → {"field": "type"}
 _filterable_fields_raw = config.get("metadata_filters", "filterable_fields", fallback="")
@@ -235,7 +231,6 @@ async def root():
             "health": "/health",
             "chat_completions": "/v1/chat/completions (OpenAI-compatible)",
             "models": "/v1/models (OpenAI-compatible)",
-            "documents": "/v1/documents (upload a PDF/DOCX, get a document_id)",
             "chatfed-ui-stream": "/chatfed-ui-stream (LangServe)",
             "chatfed-with-file-stream": "/chatfed-with-file-stream (LangServe)",
         }
@@ -245,12 +240,9 @@ async def root():
 #----------------------------------------
 # FRONTEND-AGNOSTIC ROUTES
 #----------------------------------------
-# /v1/chat/completions is standard for many frontend UIs (OpenWebUI, LibreChat)
-# /v1/documents is the file bridge - OpenWebUI, LibreChat etc handle this in different ways.
-# So the UI uploads to this route and gets a a document id on the return.
-document_store = DocumentStore(ttl_seconds=DOCUMENT_TTL_SECONDS, max_documents=MAX_DOCUMENTS)
-
-app.include_router(build_documents_router(document_store, max_upload_bytes=MAX_UPLOAD_BYTES))
+# /v1/chat/completions is standard for many frontend UIs (OpenWebUI, LibreChat).
+# Attachments are provided as already-extracted text (`files`), because generic
+# frontends do their own extraction and send raw text.
 app.include_router(
     build_openai_router(
         compiled_graph,
@@ -260,7 +252,6 @@ app.include_router(
         blocklist=blocklist,
         blocklist_notice=BLOCKLIST_MESSAGE,
         classification_config=output_classification_config,
-        document_store=document_store,
         include_citations=API_CITATIONS,
     )
 )

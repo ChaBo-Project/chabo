@@ -248,8 +248,9 @@ async def process_query_streaming(
     """
     Process a query through the LangGraph workflow with streaming.
 
-    `ingestor_context` is pre-ingested document text (from UIs that provide this via /v1/documents).
-    `ingest_node` leaves untouched when no raw `file_content` is supplied.
+    `ingestor_context` is already-chunked attachment text (from UIs that extract it themselves
+    and send it on the chat request). `ingest_node` leaves it untouched when no raw
+    `file_content` is supplied.
     """
     initial_state = {
         "query": query,
@@ -264,15 +265,15 @@ async def process_query_streaming(
     if file_content and filename:
         initial_state["file_content"] = file_content
 
-    # Pre-ingested document text (uploaded out of band via /v1/documents)
+    # Already-chunked attachment text (the frontend did the extraction)
     if ingestor_context:
         initial_state["ingestor_context"] = ingestor_context
 
     # The attachment's name - 2 considerations here:
     # `ingest_node` reads it to pick a parser (based on file type)
     # `generate_node_streaming` uses it as the attachment's citation label (which is why it
-    # is maintained for pre-ingested text as well as files (otherwise a document
-    # uploaded via /v1/documents is cited as "unknown").
+    # is maintained for pre-extracted text as well as files (otherwise a text attachment
+    # is cited as "unknown").
     if filename and (file_content or ingestor_context):
         initial_state["filename"] = filename
 

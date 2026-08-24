@@ -105,9 +105,7 @@ src/
 └── components/
     ├── utils.py                                # Shared: getconfig, get_config_value, build_conversation_context, HTTP helpers (_call_hf_endpoint, _acall_hf_endpoint)
     ├── api/                                     # Frontend-agnostic HTTP surface — INFRASTRUCTURE
-    │   ├── openai_compat.py                    # /v1/chat/completions + /v1/models (OpenAI-compatible)
-    │   ├── documents.py                        # /v1/documents — upload a file, get a document_id
-    │   └── document_store.py                   # TTL/capacity-bounded store of ingested uploads
+    │   └── openai_compat.py                    # /v1/chat/completions + /v1/models (OpenAI-compatible)
     ├── orchestration/
     │   ├── workflow.py                         # Builds and compiles the LangGraph state machine — EXTEND
     │   ├── nodes.py                            # The 4 async graph node functions — EXTEND

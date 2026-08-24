@@ -8,9 +8,10 @@ Deviations from OpenAI's API:
 - Sampling parameters (`temperature`, `top_p`, `max_tokens`, …) are ignored.
 - `usage` is omitted. Token accounting isn't available uniformly across inference providers
 - Client-supplied `system` message is ignored. The system prompt is set in Chabo `prompts.py`
-- 2 non-standard request fields carry file attachments, since no chat protocol does:
-   - `document_ids` (ids from POST /v1/documents)
-   - inline base64 `files`
+- `files1 field carries attachments:
+   - `files`: [{"name": ..., "content": "<extracted text>"}] 
+   - generic frontends process files themselves and send raw text. 
+   - Raw-file processing still exists on the Chabo-ChatUI route.
 - Responses may carry a top-level `citations` array (Perplexity-style). Sources are always *also*
   rendered as markdown in the message body.
 """
@@ -24,17 +25,15 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from components.guardrails.output_classification import OutputClassificationConfig
+from components.ingestor.ingestor import process_text
 from components.orchestration.renderers import MarkdownRenderer, OpenAIChunkRenderer
 from components.orchestration.ui_adapters import (
     _consume_stream,
     _make_output_classifier,
     _make_output_filter,
-    decode_base64_file,
     prepare_conversation,
     process_query_streaming,
 )
-
-from .document_store import DocumentStore
 
 logger = logging.getLogger(__name__)
 
@@ -61,14 +60,8 @@ class ChatCompletionRequest(BaseModel):
     messages: List[ChatMessage] = Field(default_factory=list)
     model: Optional[str] = None
     stream: bool = False
-    #: Ids returned by POST /v1/documents, attached to this turn.
-    document_ids: Optional[List[str]] = None
-    #: Inline base64 attachments ({name, type: "base64", content}) for clients that can't
-    #: make a separate upload call — the ChatUI file payload shape.
+    #: This turn's attachments: [{"name": "report.pdf", "content": "<extracted text>"}].
     files: Optional[List[Dict[str, Any]]] = None
-    #: Some frontends forward extra body fields nested under `metadata`; document ids are
-    #: read from there too.
-    metadata: Optional[Dict[str, Any]] = None
 
 
 def extract_text(content: Union[str, List[Dict[str, Any]], None]) -> str:
@@ -90,65 +83,41 @@ def extract_text(content: Union[str, List[Dict[str, Any]], None]) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def _requested_document_ids(request: ChatCompletionRequest) -> List[str]:
-    """Collect document ids from the top level and from a `metadata` passthrough."""
-    ids = list(request.document_ids or [])
-    if isinstance(request.metadata, dict):
-        nested = request.metadata.get("document_ids")
-        if isinstance(nested, list):
-            ids.extend(str(i) for i in nested)
-        elif isinstance(nested, str):
-            ids.append(nested)
-    return ids
-
-
-def resolve_attachments(
-    request: ChatCompletionRequest, store: Optional[DocumentStore]
-) -> tuple[Optional[str], Optional[bytes], Optional[str]]:
+def resolve_attachments(request: ChatCompletionRequest) -> tuple[Optional[str], Optional[str]]:
     """
-    Resolve this turn's attachments to (ingestor_context, file_bytes, filename).
+    Resolve this turn's attachments to (ingestor_context, filename).
 
-    Stored ids arrive already ingested (that work happened at upload time); an inline base64
-    file is passed through as raw bytes so `ingest_node` handles it exactly as it does for a
-    ChatUI upload. 
+    Text is chunked and capped exactly as an uploaded file would be, so an attachment can't
+    blow the context window just because the frontend did the extraction. `filename` is the
+    citation label only - nothing is parsed from it.
+
     """
     chunks: List[str] = []
-    stored_names: List[str] = []
+    names: List[str] = []
 
-    doc_ids = _requested_document_ids(request)
-    if doc_ids and store is None:
-        raise HTTPException(status_code=400, detail="Document uploads are not enabled.")
-    for doc_id in doc_ids:
-        doc = store.get(doc_id)
-        if doc is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Unknown or expired document id: {doc_id}. Re-upload via POST /v1/documents.",
-            )
-        chunks.append(doc.context)
-        if doc.filename:
-            stored_names.append(doc.filename)
-
-    file_content = None
-    filename = None
-    for file_info in request.files or []:
-        if not isinstance(file_info, dict):
+    for entry in request.files or []:
+        if not isinstance(entry, dict):
             continue
+        name = str(entry.get("name") or "attachment")
+        text = entry.get("content")
+        if not isinstance(text, str) or not text.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Attachment '{name}' carries no text. `files` entries must be "
+                       "{'name': ..., 'content': '<extracted text>'}.",
+            )
         try:
-            file_content, filename = decode_base64_file(file_info)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        if file_content:
-            break  # one inline file per turn, matching the ChatUI file route
+            chunks.append(process_text(text, name))
+        except Exception as e:
+            logger.error("Attachment processing failed for %s: %s", name, e, exc_info=True)
+            raise HTTPException(
+                status_code=500, detail=f"Failed to process attachment '{name}': {e}"
+            ) from e
+        names.append(name)
 
-    # `filename` labels the attachment in the answer's citations (nodes.py builds the
-    # ingestor Document with it, defaulting to "unknown"). An inline file must keep its own
-    # name because ingest_node parses the extension from it; stored ids are already ingested,
-    # so there the name is purely the citation label.
-    if file_content is None and stored_names:
-        filename = ", ".join(stored_names)
-
-    return ("\n\n".join(c for c in chunks if c) or None), file_content, filename
+    if not chunks:
+        return None, None
+    return "\n\n".join(chunks), ", ".join(names)
 
 
 def build_openai_router(
@@ -160,7 +129,6 @@ def build_openai_router(
     blocklist=None,
     blocklist_notice: str = "[response withheld]",
     classification_config: Optional[OutputClassificationConfig] = None,
-    document_store: Optional[DocumentStore] = None,
     include_citations: bool = True,
 ) -> APIRouter:
     """
@@ -186,14 +154,14 @@ def build_openai_router(
         if not (query or "").strip():
             raise HTTPException(status_code=400, detail="No user message found in `messages`.")
 
-        ingestor_context, file_content, filename = resolve_attachments(request, document_store)
+        ingestor_context, filename = resolve_attachments(request)
 
         return process_query_streaming(
             compiled_graph=compiled_graph,
             query=query,
             conversation_context=conversation_context,
             user_messages_history=user_messages_history,
-            file_content=file_content,
+            file_content=None,
             filename=filename,
             ingestor_context=ingestor_context,
             session_type="openai",
