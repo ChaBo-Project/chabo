@@ -42,8 +42,8 @@ Not all files are equal. The codebase has four distinct layers — understanding
 │                                                                      │
 │  Must                              Optional                          │
 │  ──────────────────────────────    ──────────────────────────────    │
-│  retriever/filters.py              orchestration/ui_adapters.py      │
-│  → valid filter values for           _build_filters_footnote()       │
+│  retriever/filters.py              orchestration/renderers.py       │
+│  → valid filter values for           format_filters_footnote()      │
 │    your corpus; startup fails         controls the italic text        │
 │    if any declared field missing      shown in ChatUI when filters    │
 │                                       are applied                    │
@@ -73,6 +73,7 @@ Not all files are equal. The codebase has four distinct layers — understanding
 │  ingestor/upload_parquet.py            generator/sources.py          │
 │  generator/generator_orchestrator.py   orchestration/telemetry.py   │
 │  orchestration/ui_adapters.py (core)   utils.py                      │
+│  api/ (openai_compat, documents, document_store)                     │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -100,15 +101,18 @@ Not all files are equal. The codebase has four distinct layers — understanding
 
 ```
 src/
-├── main.py                                     # FastAPI app, LangServe route registration, startup validation of filterable_fields vs instance.yaml
+├── main.py                                     # FastAPI app, /v1 + LangServe route registration, startup validation of filterable_fields vs instance.yaml
 └── components/
     ├── utils.py                                # Shared: getconfig, get_config_value, build_conversation_context, HTTP helpers (_call_hf_endpoint, _acall_hf_endpoint)
+    ├── api/                                     # Frontend-agnostic HTTP surface — INFRASTRUCTURE
+    │   └── openai_compat.py                    # /v1/chat/completions + /v1/models (OpenAI-compatible)
     ├── orchestration/
     │   ├── workflow.py                         # Builds and compiles the LangGraph state machine — EXTEND
     │   ├── nodes.py                            # The 4 async graph node functions — EXTEND
     │   ├── state.py                            # GraphState TypedDict + ChatUIInput / ChatUIFileInput Pydantic models — EXTEND
-    │   ├── ui_adapters.py                      # Translates LangServe input → graph state and graph events → streamed text — INFRASTRUCTURE
-    │   │                                       # Optional customize: _build_filters_footnote() controls filter display text in ChatUI
+    │   ├── ui_adapters.py                      # Request unpacking + _consume_stream (the single event consumer, owns the output guards) — INFRASTRUCTURE
+    │   ├── renderers.py                        # Internal event stream → wire format, one class per frontend — EXTEND (add a frontend)
+    │   │                                       # Optional customize: format_filters_footnote() controls filter display text
     │   └── telemetry.py                        # Extracts retriever telemetry from Document metadata for logging — INFRASTRUCTURE
     ├── retriever/
     │   ├── retriever_orchestrator.py           # ChaBoHFEndpointRetriever: Embed → Qdrant Search → Rerank — INFRASTRUCTURE
@@ -205,7 +209,7 @@ POST /chatfed-ui-stream
   ← chatui_adapter assembles the final stream:
       - Yields token chunks to ChatUI as they arrive
       - Stores filters_footnote when filters_applied event received
-      - At "end": yields _build_filters_footnote() text then sources markdown
+      - At "end": renders the filters footnote then the sources markdown (renderers.py)
 ```
 
 For file uploads the flow is identical via `chatui_file_adapter` / `/chatfed-with-file-stream`. The only difference is `file_content` + `filename` are decoded from base64 and added to initial state, causing `ingest_node` to run instead of skip.
@@ -298,9 +302,13 @@ that's the intended signal to go configure `instance.yaml`, not a bug.
 - **`system_prompt`** — citation format, response structure, language matching, missing-info handling, follow-up question logic
 - **`build_filter_extraction_messages()`** — the instructions given to the LLM for extracting metadata filters; tune this if extraction accuracy is poor for your domain
 
-### Change filter display in ChatUI
+### Change filter display
 
-Edit `_build_filters_footnote()` in `ui_adapters.py` to change the wording, emoji, or format of the italic footnote shown when filters are applied.
+Edit `format_filters_footnote()` in `renderers.py` to change the wording, emoji, or format of the italic footnote shown when filters are applied. (Shared by every frontend.)
+
+### Add a frontend
+
+Subclass `BaseRenderer` in `renderers.py` (text / notice / footnote / sources / error / prelude / finish) and pass an instance to `_consume_stream`. The graph, the output guards, and the citation logic are shared. See `docs/frontend-integration.md`.
 
 ### Change retrieval parameters at runtime
 

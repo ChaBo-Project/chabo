@@ -1,61 +1,113 @@
 """
-ChatUI Adapters for LangGraph Workflow Streaming
+Frontend adapters for the LangGraph workflow stream.
+
+Layering:
+  process_query_streaming   runs the graph and normalises its custom events into ChaBo's
+                            internal event stream (data / filters_applied / sources /
+                            error / end) — frontend-agnostic.
+  _consume_stream           the single consumer of that stream: applies the output guards
+                            and renders each event through a `BaseRenderer` (renderers.py).
+  chatui_adapter / ...      per-frontend entry points that unpack an incoming request into
+                            (query, conversation context, history) and pick a renderer.
+
+- The ChatUI adapters maintain the LangServe approach
+- the OpenAI-compatible routes in components/api reuse the same two layers with a different renderer
 """
+import base64
 import logging
 import asyncio
-import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 from components.utils import build_conversation_context
 from components.guardrails.output_guard import StreamingBlocklistFilter
 from components.guardrails.output_classification import StreamingClassifier, OutputClassificationConfig
+from .renderers import CHATUI_PLACEHOLDER_URI, BaseRenderer, MarkdownRenderer
 
 logger = logging.getLogger(__name__)
 
-# OUTPUT GUARD: Small delay for trailing SSE events (answer tail / footnote / sources) for ChatUI.
-# ChatUI's langserve-streaming parser reads event type from the chunk prefix (e.g. 'data:')
-# With output guard enabled, chunks are buffered. This is fine except for the final chunks containing sources.
-# This delay is just a sleep timer which forces separation. 
-_TRAILING_FLUSH_DELAY = float(os.getenv("TRAILING_FLUSH_DELAY", "0.05"))
 
-
-def _build_filters_footnote(filters: Dict, narrowed: bool) -> str:
-    """Build a subtle italic footnote showing which filters were applied during retrieval."""
-    parts = [
-        f"{k}: {', '.join(v) if isinstance(v, list) else v}"
-        for k, v in filters.items()
-    ]
-    base = "🔍 Searched within: " + " · ".join(parts)
-    if narrowed:
-        base += " (narrowed — combined filter returned no results)"
-    return "*" + base + "*"
-
-
-def _render_sources(sources_collected) -> str:
+def normalize_messages(messages_value) -> List[Any]:
     """
-    Render collected sources as markdown with doc:// URLs for ChatUI to parse.
+    Accept dicts or objects for conversation messages and return objects with .role/.content.
+
+    Frontends differ here:
+    - LangServe hands over pydantic models
+    - OpenAI routes hand over plain dicts
     """
-    sources_text = "\n\n**Sources:**\n"
-    for i, source in enumerate(sources_collected, 1):
-        if isinstance(source, dict):
-            title = source.get('title', 'Unknown')
-            uri = source.get('uri') or 'doc://#'
-            sources_text += f"{i}. [{title}]({uri})\n"
+    messages = []
+    for msg in messages_value or []:
+        if isinstance(msg, dict):
+            messages.append(type('Message', (), {
+                'role': msg.get('role', 'unknown'),
+                'content': msg.get('content', '')
+            })())
         else:
-            sources_text += f"{i}. {str(source)}\n"
-    return sources_text
+            messages.append(msg)
+    return messages
+
+
+def prepare_conversation(
+    messages_value,
+    fallback_text: str = "",
+    max_turns: int = 3,
+    max_chars: int = 8000,
+) -> Tuple[str, Optional[str], Optional[str]]:
+    """
+    Turn an incoming message list into the three things the graph needs.
+
+    Returns (query, conversation_context, user_messages_history):
+    - query: the latest user turn (or `fallback_text` when there are none)
+    - conversation_context: user+assistant history for generation (last N turns)
+    - user_messages_history user-turn-only history for filter extraction (assistant
+                            responses and retrieved doc content are deliberately excluded,
+                            since they cause spurious filter matches)
+    """
+    messages = normalize_messages(messages_value)
+    if not messages:
+        return fallback_text, None, None
+
+    user_messages = [msg for msg in messages if msg.role == 'user']
+    query = user_messages[-1].content if user_messages else fallback_text
+
+    msg_metadata = {
+        'total': len(messages),
+        'user': len(user_messages),
+        'assistant': len([m for m in messages if m.role == 'assistant']),
+        'msg_lengths': [len(m.content) for m in messages]
+    }
+    logger.info(f"Processing query: {str(query)[:20]}... | Conversation: {msg_metadata}")
+
+    conversation_context = build_conversation_context(messages, max_turns=max_turns, max_chars=max_chars)
+    user_messages_history = "\n".join(
+        f"USER: {msg.content}" for msg in user_messages[-max_turns:]
+    ) if user_messages else None
+
+    return query, conversation_context, user_messages_history
+
+
+def decode_base64_file(file_info: Dict[str, Any]) -> Tuple[Optional[bytes], Optional[str]]:
+    """
+    Decode one inline base64 file entry ({name, type: 'base64', content}) to (bytes, filename).
+    """
+    if file_info.get('type') != 'base64' or not file_info.get('content'):
+        return None, None
+    try:
+        return base64.b64decode(file_info['content']), file_info.get('name', 'uploaded_file')
+    except Exception as e:
+        raise ValueError(f"Failed to decode uploaded file - {str(e)}") from e
 
 
 async def _consume_stream(
     process_iter,
     output_filter: Optional[StreamingBlocklistFilter] = None,
     classifier: Optional[StreamingClassifier] = None,
+    renderer: Optional[BaseRenderer] = None,
 ):
     """
-    Shared event consumer for both ChatUI adapters.
+    Shared event consumer for every frontend.
 
-    Maps process_query_streaming events to plain text yielded to the client
-    Appends the filters footnote + sources on `end` (for Chatui)
+    Maps process_query_streaming events through `renderer` (markdown by default) and appends
+    the filters footnote + sources on `end`.
 
     Output guards (independent, both optional):
       - `classifier` (LLM classifier): observes the raw answer text and classifies it in
@@ -63,15 +115,26 @@ async def _consume_stream(
       - `output_filter` (blocklist): every token is routed through the streaming
         blocklist filter. On a hit the stream stops and the blocklist message is displayed.
     In either case the footnote/sources are suppressed on a hit.
+
+    Guards see the raw generated text (not text formatted for UI) — the renderer is
+    applied after a chunk has passed both guards.
     """
+    renderer = renderer or MarkdownRenderer()
+    delay = renderer.trailing_flush_delay
     filters_footnote = None
     sources_collected = None
     blocked = False
 
     try:
+        out = renderer.prelude()
+        if out:
+            yield out
+
         async for result in process_iter:
             if not isinstance(result, dict):
-                yield str(result)
+                out = renderer.text(str(result))
+                if out:
+                    yield out
                 await asyncio.sleep(0)
                 continue
 
@@ -82,54 +145,74 @@ async def _consume_stream(
                 # LLM classifier observes the raw generated text first: a verdict from an
                 # earlier window truncates BEFORE this chunk is shown (non-blocking check).
                 if classifier is not None and classifier.feed(content):
-                    yield classifier.cfg.notice
-                    await asyncio.sleep(_TRAILING_FLUSH_DELAY)
+                    out = renderer.notice(classifier.cfg.notice)
+                    if out:
+                        yield out
+                    await asyncio.sleep(delay)
                     blocked = True
                     break
                 if output_filter is not None:
+                    # On a hit `emit` IS the blocklist notice (the buffer is dropped), so it
+                    # is rendered as a notice rather than as answer text.
                     emit, hit = output_filter.feed(content)
                     if emit:
-                        yield emit
+                        out = renderer.notice(emit) if hit else renderer.text(emit)
+                        if out:
+                            yield out
                     if hit:
                         blocked = True
                         break  # stop streaming the (now-blocked) answer
                 else:
-                    yield content
+                    out = renderer.text(content)
+                    if out:
+                        yield out
             elif result_type == "filters_applied":
-                filters_footnote = _build_filters_footnote(
-                    content.get("filters", {}), content.get("narrowed", False)
-                )
+                filters_footnote = (content.get("filters", {}), content.get("narrowed", False))
             elif result_type == "sources":
                 sources_collected = content
             elif result_type == "end":
                 if output_filter is not None and not blocked:
                     tail, hit = output_filter.flush_final()
                     if tail:
-                        yield tail
-                        await asyncio.sleep(_TRAILING_FLUSH_DELAY)
+                        out = renderer.notice(tail) if hit else renderer.text(tail)
+                        if out:
+                            yield out
+                        await asyncio.sleep(delay)
                     if hit:
                         blocked = True
                 if classifier is not None and not blocked:
                     notice, hit = await classifier.flush_final()
                     if hit:
-                        yield notice
-                        await asyncio.sleep(_TRAILING_FLUSH_DELAY)
+                        out = renderer.notice(notice)
+                        if out:
+                            yield out
+                        await asyncio.sleep(delay)
                         blocked = True
                 if blocked:
-                    return  # suppress footnote + sources on a blocked answer
+                    break  # suppress footnote + sources on a blocked answer
                 if filters_footnote:
-                    yield f"\n\n---\n{filters_footnote}"
-                    await asyncio.sleep(_TRAILING_FLUSH_DELAY)
+                    out = renderer.footnote(*filters_footnote)
+                    if out:
+                        yield out
+                    await asyncio.sleep(delay)
                 if sources_collected:
-                    logger.info("Sending markdown sources with doc:// scheme")
-                    yield _render_sources(sources_collected)
+                    logger.info("Appending markdown sources block")
+                    out = renderer.sources(sources_collected)
+                    if out:
+                        yield out
             elif result_type == "error":
-                yield f"Error: {content}"
+                out = renderer.error(content)
+                if out:
+                    yield out
 
             await asyncio.sleep(0)
     finally:
         if classifier is not None:
             await classifier.aclose()  # cancel any incoming (in-progress) classifications
+
+    tail = renderer.finish()
+    if tail:
+        yield tail
 
 
 def _make_output_filter(blocklist, blocklist_notice: str) -> Optional[StreamingBlocklistFilter]:
@@ -158,16 +241,20 @@ async def process_query_streaming(
     conversation_context: str = None,
     user_messages_history: str = None,
     file_content: bytes = None,
-    filename: str = None
+    filename: str = None,
+    ingestor_context: str = None,
+    session_type: str = "chatui",
 ):
     """
     Process a query through the LangGraph workflow with streaming.
 
-    COPIED FROM ORIGINAL ORCHESTRATOR. TO BE REPLACED WITH AGENTIC WORFLOW
+    `ingestor_context` is already-chunked attachment text (from UIs that extract it themselves
+    and send it on the chat request). `ingest_node` leaves it untouched when no raw
+    `file_content` is supplied.
     """
     initial_state = {
         "query": query,
-        "metadata": {"session_type": "chatui"},
+        "metadata": {"session_type": session_type},
         "raw_documents": [],
         "conversation_context": conversation_context,
         "metadata_filters": metadata_filters,
@@ -177,6 +264,17 @@ async def process_query_streaming(
     # Add file content if present
     if file_content and filename:
         initial_state["file_content"] = file_content
+
+    # Already-chunked attachment text (the frontend did the extraction)
+    if ingestor_context:
+        initial_state["ingestor_context"] = ingestor_context
+
+    # The attachment's name - 2 considerations here:
+    # `ingest_node` reads it to pick a parser (based on file type)
+    # `generate_node_streaming` uses it as the attachment's citation label (which is why it
+    # is maintained for pre-extracted text as well as files (otherwise a text attachment
+    # is cited as "unknown").
+    if filename and (file_content or ingestor_context):
         initial_state["filename"] = filename
 
     try:
@@ -200,6 +298,18 @@ async def process_query_streaming(
         yield {"type": "error", "content": str(e)}
 
 
+def _chatui_renderer() -> MarkdownRenderer:
+    """
+    The markdown renderer as per Chabo-ChatUI.
+
+    Two frontend-specific settings:
+     1. Trailing flush delay (langserve-streaming parser drops coalesced trailing chunks)
+     2. Placeholder links (only renders a citation whose URL matches doc:// | http:// | https://, so a
+    source with no URL needs a prefix). 
+    """
+    return MarkdownRenderer(placeholder_uri=CHATUI_PLACEHOLDER_URI)
+
+
 async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: int = 8000,
                          blocklist=None, blocklist_notice: str = "[response withheld]",
                          classification_config: Optional[OutputClassificationConfig] = None):
@@ -215,39 +325,9 @@ async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: in
             text_value = getattr(data, 'text', '')
             messages_value = getattr(data, 'messages', None)
 
-        # Convert dict messages to objects if needed
-        messages = []
-        if messages_value:
-            for msg in messages_value:
-                if isinstance(msg, dict):
-                    messages.append(type('Message', (), {
-                        'role': msg.get('role', 'unknown'),
-                        'content': msg.get('content', '')
-                    })())
-                else:
-                    messages.append(msg)
-
-        # Extract latest user query
-        user_messages = [msg for msg in messages if msg.role == 'user']
-        query = user_messages[-1].content if user_messages else text_value
-
-        # Conversation metadata (troubleshooting purposes)
-        msg_metadata = {
-            'total': len(messages),
-            'user': len(user_messages),
-            'assistant': len([m for m in messages if m.role == 'assistant']),
-            'msg_lengths': [len(m.content) for m in messages]
-        }
-        logger.info(f"Processing query: {query[:20]}... | Conversation: {msg_metadata}")
-
-        # Build conversation context for generation (last N turns)
-        conversation_context = build_conversation_context(messages, max_turns=max_turns, max_chars=max_chars)
-
-        # User-only history for filter extraction (no assistant responses / retrieved doc content)
-        user_only = [msg for msg in messages if msg.role == 'user']
-        user_messages_history = "\n".join(
-            f"USER: {msg.content}" for msg in user_only[-max_turns:]
-        ) if user_only else None
+        query, conversation_context, user_messages_history = prepare_conversation(
+            messages_value, fallback_text=text_value, max_turns=max_turns, max_chars=max_chars
+        )
 
         output_filter = _make_output_filter(blocklist, blocklist_notice)
         classifier = _make_output_classifier(classification_config)
@@ -261,6 +341,7 @@ async def chatui_adapter(data, compiled_graph, max_turns: int = 3, max_chars: in
             ),
             output_filter,
             classifier,
+            _chatui_renderer(),
         ):
             yield result
 
@@ -285,42 +366,9 @@ async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_char
             messages_value = getattr(data, 'messages', None)
             files_value = getattr(data, 'files', None)
 
-        # Extract query - prefer structured messages
-        conversation_context = None
-        if messages_value and len(messages_value) > 0:
-            # Convert dict messages to objects
-            messages = []
-            for msg in messages_value:
-                if isinstance(msg, dict):
-                    messages.append(type('Message', (), {
-                        'role': msg.get('role', 'unknown'),
-                        'content': msg.get('content', '')
-                    })())
-                else:
-                    messages.append(msg)
-
-            user_messages = [msg for msg in messages if msg.role == 'user']
-            query = user_messages[-1].content if user_messages else text_value
-
-            # Conversation metadata (troubleshooting purposes)
-            msg_metadata = {
-                'total': len(messages),
-                'user': len(user_messages),
-                'assistant': len([m for m in messages if m.role == 'assistant']),
-                'msg_lengths': [len(m.content) for m in messages]
-            }
-            logger.info(f"Processing query with file: {query[:20]}... | Conversation: {msg_metadata}")
-
-            conversation_context = build_conversation_context(messages, max_turns=max_turns, max_chars=max_chars)
-
-            # User-only history for filter extraction (no assistant responses / retrieved doc content)
-            user_only = [msg for msg in messages if msg.role == 'user']
-            user_messages_history = "\n".join(
-                f"USER: {msg.content}" for msg in user_only[-max_turns:]
-            ) if user_only else None
-        else:
-            query = text_value
-            user_messages_history = None
+        query, conversation_context, user_messages_history = prepare_conversation(
+            messages_value, fallback_text=text_value, max_turns=max_turns, max_chars=max_chars
+        )
 
         file_content = None
         filename = None
@@ -328,16 +376,12 @@ async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_char
         if files_value and len(files_value) > 0:
             file_info = files_value[0]
             logger.info(f"Processing file: {file_info.get('name', 'unknown')}")
-
-            if file_info.get('type') == 'base64' and file_info.get('content'):
-                try:
-                    import base64
-                    file_content = base64.b64decode(file_info['content'])
-                    filename = file_info.get('name', 'uploaded_file')
-                except Exception as e:
-                    logger.error(f"Error decoding base64 file: {str(e)}")
-                    yield f"Error: Failed to decode uploaded file - {str(e)}"
-                    return
+            try:
+                file_content, filename = decode_base64_file(file_info)
+            except ValueError as e:
+                logger.error(str(e))
+                yield f"Error: {str(e)}"
+                return
 
         output_filter = _make_output_filter(blocklist, blocklist_notice)
         classifier = _make_output_classifier(classification_config)
@@ -353,6 +397,7 @@ async def chatui_file_adapter(data, compiled_graph, max_turns: int = 3, max_char
             ),
             output_filter,
             classifier,
+            _chatui_renderer(),
         ):
             yield result
 
